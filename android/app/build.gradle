@@ -68,7 +68,7 @@ dependencies {
 }
 
 [
-    // new Tuple2('Debug', ''),
+    new Tuple2('Debug', ''),
     new Tuple2('Profile', '--release'),
     new Tuple2('Release', '--release')
 ].each {

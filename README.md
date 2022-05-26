@@ -44,7 +44,7 @@ At the moment, our repo is still private. If we use the git repo, it will lead t
 ```
 CMake Error at cmake_install.cmake:66 (file):
   file INSTALL cannot copy file
-  "/home/thaodt/projects/LitheumOrg/LitheumFlutterDemo/build/linux/x64/debug/intermediates_do_not_run/litheum_wallet"
+  "/home/thaodt/projects/LitheumOrg/LitheumMobileWallet/build/linux/x64/debug/intermediates_do_not_run/litheum_wallet"
   to "/usr/local/litheum_wallet": Permission denied.
 ```
 i think will need to update `rust.cmake` in `linux/rust.cmake`, but lets do it later.
