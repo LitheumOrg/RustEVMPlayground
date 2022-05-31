@@ -15,6 +15,8 @@ abstract class Native {
   Future<String> greet({dynamic hint});
 
   Future<String> getAddress({dynamic hint});
+
+  Future<int> getBalance({dynamic hint});
 }
 
 class NativeImpl extends FlutterRustBridgeBase<NativeWire> implements Native {
@@ -46,6 +48,17 @@ class NativeImpl extends FlutterRustBridgeBase<NativeWire> implements Native {
         hint: hint,
       ));
 
+  Future<int> getBalance({dynamic hint}) => executeNormal(FlutterRustBridgeTask(
+        callFfi: (port_) => inner.wire_get_balance(port_),
+        parseSuccessData: _wire2api_u64,
+        constMeta: const FlutterRustBridgeTaskConstMeta(
+          debugName: "get_balance",
+          argNames: [],
+        ),
+        argValues: [],
+        hint: hint,
+      ));
+
   // Section: api2wire
 
   // Section: api_fill_to_wire
@@ -55,6 +68,10 @@ class NativeImpl extends FlutterRustBridgeBase<NativeWire> implements Native {
 // Section: wire2api
 String _wire2api_String(dynamic raw) {
   return raw as String;
+}
+
+int _wire2api_u64(dynamic raw) {
+  return raw as int;
 }
 
 int _wire2api_u8(dynamic raw) {
@@ -112,6 +129,20 @@ class NativeWire implements FlutterRustBridgeWireBase {
           'wire_get_address');
   late final _wire_get_address =
       _wire_get_addressPtr.asFunction<void Function(int)>();
+
+  void wire_get_balance(
+    int port_,
+  ) {
+    return _wire_get_balance(
+      port_,
+    );
+  }
+
+  late final _wire_get_balancePtr =
+      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Int64)>>(
+          'wire_get_balance');
+  late final _wire_get_balance =
+      _wire_get_balancePtr.asFunction<void Function(int)>();
 
   void free_WireSyncReturnStruct(
     WireSyncReturnStruct val,

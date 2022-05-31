@@ -12,7 +12,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Flutter Litheum Wallet',
       theme: ThemeData(
         // This is the theme of your application.
         //
@@ -25,7 +25,7 @@ class MyApp extends StatelessWidget {
         // is not restarted.
         primarySwatch: Colors.blue,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const MyHomePage(title: 'Litheum Wallet'),
     );
   }
 }
@@ -55,12 +55,14 @@ class _MyHomePageState extends State<MyHomePage> {
   // late Future<bool> isRelease;
   late Future<String> greeter;
   late Future<String> address;
+  late Future<int> balance;
 
   @override
   void initState() {
     super.initState();
     greeter = api.greet();
     address = api.getAddress();
+    balance = api.getBalance();
   }
 
   @override
@@ -97,7 +99,8 @@ class _MyHomePageState extends State<MyHomePage> {
           // horizontal).
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
-            const Text("Keypair Address:"),
+            // const Text("Keypair Address:"),
+            const Text("Keypair Address | Balance:"),
             // To render the results of a Future, a FutureBuilder is used which
             // turns a Future into an AsyncSnapshot, which can be used to
             // extract the error state, the loading state and the data if
@@ -109,7 +112,7 @@ class _MyHomePageState extends State<MyHomePage> {
             FutureBuilder<List<dynamic>>(
               // We await two unrelated futures here, so the type has to be
               // List<dynamic>.
-              future: Future.wait([greeter, address]),
+              future: Future.wait([greeter, address, balance]),
               builder: (context, snap) {
                 final style = Theme.of(context).textTheme.headline4;
                 if (snap.error != null) {
@@ -142,9 +145,9 @@ class _MyHomePageState extends State<MyHomePage> {
                 //     'Unknown OS';
                 // return Text('$text ($release)', style: style);
                 // ignore: unnecessary_string_interpolations
-                // final text0 = data[0];
-                final text1 = data[1];
-                return Text('($text1)', style: style);
+                final text0 = data[1];
+                final text1 = data[2];
+                return Text('$text0 | $text1', style: style);
               },
             )
           ],

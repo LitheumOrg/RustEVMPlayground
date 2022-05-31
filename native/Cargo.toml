@@ -10,6 +10,6 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 anyhow = "1"
-flutter_rust_bridge = "1.31.0"
+flutter_rust_bridge = "1.32.0"
 # litheumcommon = { git = "ssh://git@github.com/LitheumOrg/LitheumCore.git", package = "litheumcommon" } # check section NOTES in README.md
 litheumcommon = { path = "/home/thaodt/projects/LitheumOrg/LitheumCore/litheum-common" }
