@@ -1,4 +1,9 @@
+import 'dart:typed_data';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:fast_base58/fast_base58.dart';
 import 'ffi.dart';
 
 void main() {
@@ -23,7 +28,11 @@ class MyApp extends StatelessWidget {
         // or simply save your changes to "hot reload" in a Flutter IDE).
         // Notice that the counter didn't reset back to zero; the application
         // is not restarted.
-        primarySwatch: Colors.blue,
+        // primarySwatch: Colors.blue,
+        colorScheme: ColorScheme.fromSwatch().copyWith(
+          primary: const Color(0xffeaff55),
+          // secondary: const Color(0xFFFFC107),
+        ),
       ),
       home: const MyHomePage(title: 'Litheum Wallet'),
     );
@@ -53,6 +62,7 @@ class _MyHomePageState extends State<MyHomePage> {
   // in the initState method.
   // late Future<Platform> platform;
   // late Future<bool> isRelease;
+  final _storage = const FlutterSecureStorage();
   late Future<String> greeter;
   late Future<String> address;
   late Future<int> balance;
@@ -60,10 +70,57 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+
+    // _storage.deleteAll();
+
+    _readAll();
+    _initKeypairStore();
     greeter = api.greet();
-    address = api.getAddress();
+    address = Future<String>.delayed(const Duration(seconds: 1), () => '0x');
     balance = api.getBalance();
   }
+
+  Future<void> _readAll() async {
+    final all = await _storage.readAll(
+        // iOptions: _getIOSOptions(),
+        aOptions: _getAndroidOptions());
+    setState(() {
+      all.entries.map((entry) {
+        print('${entry.key}: ${entry.value}');
+      });
+    });
+  }
+
+  Future<void> _initKeypairStore() async {
+    var keypair = await _storage.read(key: 'keypair_store');
+    if (keypair == null) {
+      Uint8List _keypair = await api.generateKeypair();
+      final test = Base58Encode(_keypair);
+      print('encrypted_key from Rust: $_keypair');
+      print('Base58Encode keypair_store: $test');
+      final test1 = Base58Decode(test);
+      print('Base58Decode keypair_store: $test1');
+      await _storage.write(
+          // key: 'keypair', value: keypair.buffer.asByteData() as String);
+          key: 'keypair_store',
+          value: Base58Encode(_keypair));
+      address = api.getAddress(slice: _keypair);
+    } else {
+      print('keypair_store 1: $keypair');
+      final test = Base58Decode(keypair);
+      print('Base58Decode keypair_store: $test');
+      final slice = Uint8List.fromList(Base58Decode(keypair));
+      print('origianl slice: $slice');
+      address =
+          api.getAddress(slice: Uint8List.fromList(Base58Decode(keypair)));
+    }
+  }
+
+  // IOSOptions _getIOSOptions() => IOSOptions();
+
+  AndroidOptions _getAndroidOptions() => const AndroidOptions(
+        encryptedSharedPreferences: true,
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -131,20 +188,6 @@ class _MyHomePageState extends State<MyHomePage> {
 
                 // Finally, retrieve the data expected in the same order provided
                 // to the FutureBuilder.future.
-                // final Platform platform = data[0];
-                // final release = data[1] ? 'Release' : 'Debug';
-                // final text = const {
-                //       Platform.Android: 'Android',
-                //       Platform.Ios: 'iOS',
-                //       Platform.MacApple: 'MacOS with Apple Silicon',
-                //       Platform.MacIntel: 'MacOS',
-                //       Platform.Windows: 'Windows',
-                //       Platform.Unix: 'Unix',
-                //       Platform.Wasm: 'the Web',
-                //     }[platform] ??
-                //     'Unknown OS';
-                // return Text('$text ($release)', style: style);
-                // ignore: unnecessary_string_interpolations
                 final text0 = data[1];
                 final text1 = data[2];
                 return Text('$text0 | $text1', style: style);

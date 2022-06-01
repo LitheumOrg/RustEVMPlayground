@@ -30,14 +30,29 @@ pub extern "C" fn wire_greet(port_: i64) {
 }
 
 #[no_mangle]
-pub extern "C" fn wire_get_address(port_: i64) {
+pub extern "C" fn wire_generate_keypair(port_: i64) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap(
+        WrapInfo {
+            debug_name: "generate_keypair",
+            port: Some(port_),
+            mode: FfiCallMode::Normal,
+        },
+        move || move |task_callback| Ok(generate_keypair()),
+    )
+}
+
+#[no_mangle]
+pub extern "C" fn wire_get_address(port_: i64, slice: *mut wire_uint_8_list) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap(
         WrapInfo {
             debug_name: "get_address",
             port: Some(port_),
             mode: FfiCallMode::Normal,
         },
-        move || move |task_callback| Ok(get_address()),
+        move || {
+            let api_slice = slice.wire2api();
+            move |task_callback| Ok(get_address(api_slice))
+        },
     )
 }
 
@@ -55,11 +70,27 @@ pub extern "C" fn wire_get_balance(port_: i64) {
 
 // Section: wire structs
 
+#[repr(C)]
+#[derive(Clone)]
+pub struct wire_uint_8_list {
+    ptr: *mut u8,
+    len: i32,
+}
+
 // Section: wrapper structs
 
 // Section: static checks
 
 // Section: allocate functions
+
+#[no_mangle]
+pub extern "C" fn new_uint_8_list(len: i32) -> *mut wire_uint_8_list {
+    let ans = wire_uint_8_list {
+        ptr: support::new_leak_vec_ptr(Default::default(), len),
+        len,
+    };
+    support::new_leak_box_ptr(ans)
+}
 
 // Section: impl Wire2Api
 
@@ -76,6 +107,21 @@ where
             None
         } else {
             Some(self.wire2api())
+        }
+    }
+}
+
+impl Wire2Api<u8> for u8 {
+    fn wire2api(self) -> u8 {
+        self
+    }
+}
+
+impl Wire2Api<Vec<u8>> for *mut wire_uint_8_list {
+    fn wire2api(self) -> Vec<u8> {
+        unsafe {
+            let wrap = support::box_from_leak_ptr(self);
+            support::vec_from_leak_ptr(wrap.ptr, wrap.len)
         }
     }
 }

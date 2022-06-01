@@ -1,4 +1,4 @@
-package com.example.litheum_wallet
+package com.litheum.litheum_wallet
 
 import io.flutter.embedding.android.FlutterActivity
 

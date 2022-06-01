@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.litheum_wallet">
+    package="com.litheum.litheum_wallet">
    <application
         android:label="litheum_wallet"
         android:name="${applicationName}"

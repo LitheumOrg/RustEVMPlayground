@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 project(runner LANGUAGES CXX)
 
 set(BINARY_NAME "litheum_wallet")
-set(APPLICATION_ID "com.example.litheum_wallet")
+set(APPLICATION_ID "com.litheum.litheum_wallet")
 
 cmake_policy(SET CMP0063 NEW)
 
