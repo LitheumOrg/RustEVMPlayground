@@ -1,7 +1,6 @@
 # litheum_wallet
 
-This repository serves as a template for Flutter projects calling into native Rust
-libraries via `flutter_rust_bridge`.
+This repository serves as a Mobile Wallet for Litheum Network.
 
 ## Getting Started
 
@@ -16,8 +15,6 @@ To begin, ensure that you have a working installation of the following items:
 ```
 echo "ANDROID_NDK=.." >> ~/.gradle/gradle.properties
 ```
-
-- Web is not supported yet.
 
 Then go ahead and run `flutter run`! When you're ready, refer to author's documentation
 [here](https://fzyzcjy.github.io/flutter_rust_bridge/index.html)

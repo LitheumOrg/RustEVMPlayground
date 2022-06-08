@@ -1,0 +1,79 @@
+name: Rust
+
+on:
+  push:
+    branches: [main, release]
+  pull_request:
+    branches: [main, release]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rustfmt:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Run code formatting
+        working-directory: ./native
+        run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: webfactory/ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIV_KEY }}
+      - name: Run clippy code linting
+        working-directory: ./native
+        run: cargo clippy
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: webfactory/ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIV_KEY }}
+      - name: Update Rust
+        run: rustup update
+      - name: Check Rust version
+        run: rustc --version
+      - name: Build
+        working-directory: ./native
+        run: cargo build --verbose
+      - name: Run tests
+        working-directory: ./native
+        run: cargo test --verbose
+
+  coverage:
+    name: Code coverage report
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - uses: webfactory/ssh-agent@v0.5.4
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIV_KEY }}
+
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v1
+
+      - name: Code Coverage
+        env:
+          GITHUB_PULL_REQUEST: ${{ github.event.pull_request.number }}
+        run: |
+          export GITHUB_PULL_REQUEST=${{ env.GITHUB_PULL_REQUEST }}
+          export GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+          export PROJECT_TITLE="LitheumMobileWallet is built on ubuntu-latest"
+          cd native && bash <(curl -s https://raw.githubusercontent.com/duyet/cov-rs/master/cov.sh)

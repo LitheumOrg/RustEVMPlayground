@@ -1,0 +1,80 @@
+name: Telegram bot message
+# triggered by github pull_request event with some types
+on: 
+  pull_request:
+    types:
+      - opened
+      - ready_for_review
+      - review_requested
+      - closed
+  pull_request_review:
+    types:
+      - submitted
+  pull_request_review_comment:
+    types:
+      - created
+      - edited
+      - deleted
+
+jobs:
+  tele-bot:
+    name: TelegramBot
+    runs-on: ubuntu-latest
+    env:
+      # add secrets to env variables
+      TELEGRAM_CHAT_ID: "chat_id=${{ secrets.LITHBOTCHATID }}"
+      TELE_URL: "https://api.telegram.org/bot${{ secrets.LITHBOTTOKEN }}/sendMessage"
+    steps:
+      - name: if_pr_opened
+        if: ${{ github.event.action == 'opened' }}
+        run: curl --data "${{ env.TELEGRAM_CHAT_ID }}&${{ env.TELEGRAM_PR_OPEN_PAYLOAD }}" "${{ env.TELE_URL }}"
+        env:
+          TELEGRAM_PR_OPEN_PAYLOAD: "text=${{ github.actor }} creates a PULL REQUEST \
+            from ${{ github.head_ref }} to ${{ github.base_ref }}, \
+            see ${{ github.event.pull_request.html_url }}"
+      - name: if_pr_merged
+        if: ${{ github.event.pull_request.merged == true }}
+        run: curl --data "${{ env.TELEGRAM_CHAT_ID }}&${{ env.TELEGRAM_PR_MERGED_PAYLOAD }}" "${{ env.TELE_URL }}"
+        env:
+          TELEGRAM_PR_MERGED_PAYLOAD: "text=pull request is MERGED \
+            from ${{ github.head_ref }} to ${{ github.base_ref }}, \
+            see ${{ github.event.pull_request.html_url }}"
+      - name: if_pr_ready_for_review
+        if: ${{ github.event.action == 'ready_for_review' }}
+        run: curl --data "${{ env.TELEGRAM_CHAT_ID }}&${{ env.TELEGRAM_READY_FOR_REVIEW_PAYLOAD }}" "${{ env.TELE_URL }}"
+        env:
+          TELEGRAM_READY_FOR_REVIEW_PAYLOAD: "text=${{ github.actor }}'s pull request is READY for REVIEW, \
+            see ${{ github.event.pull_request.html_url }}"
+      - name: if_pr_review_requested
+        if: ${{ github.event.action == 'review_requested' }}
+        run:
+          curl --data "${{ env.TELEGRAM_CHAT_ID }}&${{ env.TELEGRAM_REVIEW_REQUESTED_PAYLOAD }}" "${{ env.TELE_URL }}"
+        env:
+          TELEGRAM_REVIEW_REQUESTED_PAYLOAD: "text=${{ github.actor }} REQUESTS a REVIEW for the pull request, \
+            reviewers: ${{ join(github.event.pull_request.requested_reviewers.*.login) }}, \
+            see ${{ github.event.pull_request.html_url }}"
+      - name: if_approved
+        if: ${{ github.event.review.state == 'approved' }}
+        run: curl --data "${{ env.TELEGRAM_CHAT_ID }}&${{ env.TELEGRAM_REVIEW_APPROVED }}" "${{ env.TELE_URL }}"
+        env:
+          TELEGRAM_REVIEW_APPROVED: "text=pull request APPROVED by ${{ github.event.review.user.login }}, \
+            see ${{ github.event.pull_request.html_url }}"
+      - name: if_comment_created
+        if: ${{ github.event.action == 'created' }}
+        run: curl --data "${{ env.TELEGRAM_CHAT_ID }}&${{ env.TELEGRAM_REVIEW_COMMENT }}" "${{ env.TELE_URL }}"
+        env:
+          TELEGRAM_REVIEW_COMMENT: "text=${{ github.event.comment.user.login }} ADDS a comment: \
+            ${{ github.event.comment.body }}, see ${{ github.event.comment.html_url}}"
+      - name: if_comment_edited
+        if: ${{ github.event.action == 'edited' }}
+        run: curl --data "${{ env.TELEGRAM_CHAT_ID }}&${{ env.TELEGRAM_REVIEW_COMMENT_EDITED }}" "${{ env.TELE_URL }}"
+        env:
+          TELEGRAM_REVIEW_COMMENT_EDITED: "text=${{ github.event.comment.user.login }}'s comment is EDITED by \
+            ${{ github.event.sender.login }}, new comment: \
+            ${{ github.event.comment.body }}, see ${{ github.event.comment.html_url}}"
+      - name: if_comment_deleted
+        if: ${{ github.event.action == 'deleted' }}
+        run: curl --data "${{ env.TELEGRAM_CHAT_ID }}&${{ env.TELEGRAM_REVIEW_COMMENT_DELETED}}" "${{ env.TELE_URL }}"
+        env:
+          TELEGRAM_REVIEW_COMMENT_DELETED: "text=comment is DELETED, \
+            see ${{ github.event.pull_request.html_url}}"

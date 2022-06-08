@@ -2,6 +2,9 @@
 name = "native"
 version = "0.1.0"
 edition = "2021"
+authors = [
+    "Amidamaru <thao@litheum.org>",
+]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,5 +14,5 @@ crate-type = ["cdylib", "staticlib"]
 [dependencies]
 anyhow = "1"
 flutter_rust_bridge = "1.32.0"
-# litheumcommon = { git = "ssh://git@github.com/LitheumOrg/LitheumCore.git", package = "litheumcommon" } # check section NOTES in README.md
-litheumcommon = { path = "/home/thaodt/projects/LitheumOrg/LitheumCore/litheum-common" }
+litheumcommon = { git = "ssh://git@github.com/LitheumOrg/LitheumCore.git", package = "litheumcommon" } # check section NOTES in README.md
+# litheumcommon = { path = "/home/thaodt/projects/LitheumOrg/LitheumCore/litheum-common" }

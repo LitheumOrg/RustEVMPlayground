@@ -51,7 +51,7 @@ pub extern "C" fn wire_get_address(port_: i64, slice: *mut wire_uint_8_list) {
         },
         move || {
             let api_slice = slice.wire2api();
-            move |task_callback| Ok(get_address(api_slice))
+            move |task_callback| get_address(api_slice)
         },
     )
 }
@@ -64,7 +64,7 @@ pub extern "C" fn wire_get_balance(port_: i64) {
             port: Some(port_),
             mode: FfiCallMode::Normal,
         },
-        move || move |task_callback| Ok(get_balance()),
+        move || move |task_callback| get_balance(),
     )
 }
 
