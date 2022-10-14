@@ -1,0 +1,16 @@
+[package]
+name = "lithevm"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+etcommon-bigint = "0.2.0"
+env_logger = "0.9.1"
+ethereum-hexutil = "0.2.3"
+json = "0.12.4"
+sha3 = "0.6"
+etcommon-rlp = { version = "0.2", default-features = false }
+serde_json = "1.0"
+sputnikvm = "0.10.1"
