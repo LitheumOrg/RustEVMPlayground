@@ -595,9 +595,7 @@ pub fn test_machine<P: Patch>(v: &Value, machine: &SeqContextVM<P>, block: &JSON
     true
 }
 
-
-
- fn is_ok(status: &VMStatus) -> bool {
+fn is_ok(status: &VMStatus) -> bool {
     match *status {
         VMStatus::ExitedOk => true,
         _ => false,
