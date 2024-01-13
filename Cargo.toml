@@ -6,11 +6,17 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-etcommon-bigint = "0.2.0"
-env_logger = "0.9.1"
-ethereum-hexutil = "0.2.3"
-json = "0.12.4"
-sha3 = "0.6"
-etcommon-rlp = { version = "0.2", default-features = false }
-serde_json = "1.0"
-sputnikvm = "0.10.1"
+evm = "0.41.1" 
+ethereum-types = "0.14.1"
+sha3 = "0.10.8"
+rand = "0.8.5"
+bigint = "4.4.3"
+#etcommon-bigint = "0.2.0"
+#env_logger = "0.9.1"
+#ethereum-hexutil = "0.2.3"
+#json = "0.12.4"
+#sha3 = "0.10.8"
+#etcommon-rlp = { version = "0.2", default-features = false }
+#serde_json = "1.0"
+#sputnikvm = "0.10.1"
+#evm = "0.41.1"
