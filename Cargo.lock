@@ -382,6 +382,7 @@ dependencies = [
  "bigint",
  "ethereum-types",
  "evm",
+ "hex",
  "rand",
  "sha3",
 ]
