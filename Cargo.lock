@@ -384,6 +384,7 @@ dependencies = [
  "evm",
  "hex",
  "rand",
+ "rlp",
  "sha3",
 ]
 
