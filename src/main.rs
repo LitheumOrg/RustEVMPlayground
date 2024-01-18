@@ -1,4 +1,4 @@
-use dialoguer::{Input, Select};
+use dialoguer::Input;
 use ethereum_types::{H160, U256};
 use evm::backend::MemoryBackend;
 use evm::executor::stack::{StackExecutor, MemoryStackState, StackSubstateMetadata};
@@ -9,43 +9,176 @@ use sha3::{Digest, Keccak256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, exit};
 use std::io;
-// extern crate rustc_hex;
-// use rustc_hex::{ToHex, FromHex};
 
 use ethabi::{Contract, Param};
 use ethabi::param_type::ParamType;
 use std::path::PathBuf;
 
-fn ask_for_constructor_args(params: &[ParamType]) -> Result<Vec<String>, io::Error> {
+struct ContractData {
+    address: Option<H160>,
+    abi: Contract,
+}
+
+type ContractsData = HashMap<String, ContractData>;
+
+fn choose_contract(contracts: &HashMap<String, ContractData>) -> Result<String, io::Error> {
+    println!("Available contracts:");
+    for (i, name) in contracts.keys().enumerate() {
+        println!("{}: {}", i + 1, name); // Display index starting from 1
+    }
+
+    let chosen_index: usize = Input::new()
+    .with_prompt("Choose a contract by number")
+    .interact_text()
+    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
+    if let Some(chosen_name) = contracts.keys().nth(chosen_index - 1) { // Subtract 1 to get the correct index
+        Ok(chosen_name.to_string())
+    } else {
+        Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid contract number"))
+    }
+}
+
+
+
+
+fn choose_function(abi: &ethabi::Contract) -> Result<(String, bool, Vec<ParamType>), io::Error> {
+    // Collect function names, check if they are getters, and get their return types
+    let functions_info: Vec<(String, bool, Vec<ParamType>)> = abi.functions.iter()
+        .map(|(name, functions)| {
+            let is_getter = functions.iter().any(|function| {
+                function.inputs.is_empty() && function.constant.unwrap_or(false)
+            });
+            let return_types = functions.iter()
+                .flat_map(|function| function.outputs.clone())
+                .map(|output| output.kind)
+                .collect();
+            (name.clone(), is_getter, return_types)
+        })
+        .collect();
+
+    println!("Available functions:");
+    for (i, (name, is_getter, return_types)) in functions_info.iter().enumerate() {
+        let getter_marker = if *is_getter { " (getter)" } else { "" };
+        let return_types_str = return_types.iter()
+            .map(|param_type| format!("{:?}", param_type))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("{}: {}{} -> [{}]", i + 1, name, getter_marker, return_types_str);
+    }
+    
+    let chosen_index: usize = Input::new()
+        .with_prompt("Choose a function by number")
+        .interact_text()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
+
+    if let Some(chosen_name) = functions_info.get(chosen_index - 1) { // Subtract 1 to get the correct index
+        Ok(chosen_name.clone())
+    } else {
+        Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid function number"))
+    }
+}
+
+fn ask_for_function_inputs(params: &[ParamType], deployer_address: H160) -> Result<Vec<String>, io::Error> {
+
     let mut args = Vec::new();
 
-    for param in params {
+    // Debug: Print the number of parameters to expect
+    println!("Expecting {} constructor arguments", params.len());
+
+    for (i, param) in params.iter().enumerate() {
+        // Debug: Print the type of each parameter
+        println!("Asking for parameter {}: {:?}", i + 1, param);
+
         match param {
             ParamType::Address => {
+                let default_address = format!("{:?}", deployer_address);
                 let input: String = Input::new()
-                    .with_prompt("Enter address")
+                    .with_prompt(&format!("Enter address (press enter for default: {})", default_address))
+                    .allow_empty(true)
                     .interact_text()
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                let input = if input.trim().is_empty() {
+                    default_address // Use the default deployer address
+                } else {
+                    input
+                };
                 args.push(input);
             },
             ParamType::Uint(size) => {
                 let input: String = Input::new()
-                    .with_prompt(&format!("Enter uint{} value", size))
+                    .with_prompt(&format!("Enter uint{} value (press enter for 0)", size))
+                    .allow_empty(true)
                     .interact_text()
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                let input = if input.trim().is_empty() {
+                    "0".to_string() // Default value: 0
+                } else {
+                    input
+                };
                 args.push(input);
             },
             ParamType::String => {
                 let input: String = Input::new()
-                    .with_prompt("Enter string value")
+                    .with_prompt("Enter string value (press enter for empty)")
+                    .allow_empty(true)
                     .interact_text()
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                let input = if input.trim().is_empty() {
+                    "".to_string() // Default value: empty string
+                } else {
+                    input
+                };
                 args.push(input);
             },
-            // Add cases for other types...
-            _ => unimplemented!("Type not supported yet"),
+            ParamType::Bool => {
+                let input: String = Input::new()
+                    .with_prompt("Enter boolean value (true or false, press enter for false)")
+                    .allow_empty(true)
+                    .interact_text()
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+                let input = if input.trim().is_empty() {
+                    "false".to_string() // Default value: false
+                } else {
+                    input
+                };
+                args.push(input);
+            },
+            ParamType::FixedBytes(size) => {
+                println!("Matched FixedBytes with size {}", size);
+                if *size == 32 {
+                    println!("Processing FixedBytes of size 32");
+                    let input: String = Input::new()
+                        .with_prompt("Enter bytes32 value (64 hex characters, press enter for zeroed bytes)")
+                        .allow_empty(true)
+                        .interact_text()
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+        
+                    let input = if input.trim().is_empty() {
+                        "0".repeat(64) // Default value: zeroed bytes32
+                    } else if input.len() == 64 && input.chars().all(|c| c.is_digit(16) || "abcdefABCDEF".contains(c)) {
+                        input
+                    } else {
+                        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Input must be 64 hex characters or empty for zeroed bytes"));
+                    };
+        
+                    args.push(input);
+                } else {
+                    println!("Encountered FixedBytes with size other than 32: {}", size);
+                    // Handle other sizes of FixedBytes or return an error
+                    unimplemented!("FixedBytes of size other than 32 are not supported yet");
+                }
+            },
+        
+            // ... other match arms ...
+        
+            _ => {
+                println!("Unhandled parameter type: {:?}", param);
+                unimplemented!("Type not supported yet: {:?}", param);
+            },
         }
     }
 
@@ -56,27 +189,48 @@ fn encode_constructor_args(params: &[ParamType], args: Vec<String>) -> Result<Ve
     let tokens = params.iter().zip(args.iter()).map(|(param, arg)| {
         match param {
             ParamType::Address => {
-                // Assuming arg is a hex string representing an address
-                let parsed_address = arg.parse::<H160>()
+                let parsed_address = arg.trim_start_matches("0x").parse::<H160>()
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
                 Ok(ethabi::Token::Address(parsed_address))
             },
-            ParamType::Uint(size) => {
-                let parsed_int = u128::from_str_radix(arg, 10)
+            ParamType::Uint(_) => {
+                let parsed_uint = U256::from_dec_str(arg)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
-                Ok(ethabi::Token::Uint(ethabi::Uint::from(parsed_int)))
+                Ok(ethabi::Token::Uint(parsed_uint))
             },
-            ParamType::String => Ok(ethabi::Token::String(arg.clone())),
-            // Add cases for other types...
-            _ => unimplemented!("Type not supported yet"),
+            ParamType::String => {
+                Ok(ethabi::Token::String(arg.clone()))
+            },
+            ParamType::Bool => {
+                let value = match arg.as_str() {
+                    "true" => true,
+                    "false" => false,
+                    _ => return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid bool input")),
+                };
+                Ok(ethabi::Token::Bool(value))
+            },
+            ParamType::FixedBytes(size) if *size == 32 => {
+                if arg.len() != 64 {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "FixedBytes(32) must be 64 hex characters"));
+                }
+                let mut bytes = Vec::new();
+                for i in 0..(arg.len() / 2) {
+                    let byte = u8::from_str_radix(&arg[i*2..i*2+2], 16)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+                    bytes.push(byte);
+                }
+                Ok(ethabi::Token::FixedBytes(bytes))
+            },
+            _ => unimplemented!("Type not supported yet: {:?}", param),
         }
     }).collect::<Result<Vec<_>, _>>()
-    .map_err(|e: Box<dyn std::error::Error>| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-
+    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    
 
     let encoded = ethabi::encode(&tokens);
     Ok(encoded)
 }
+
 fn parse_abi(abi_path: &str) -> Result<Contract, io::Error> {
     let path = PathBuf::from(abi_path);
     let file = fs::File::open(path)
@@ -158,9 +312,27 @@ fn compile_contracts(contracts_dir: &str, contract_names: &[String]) -> Result<(
             .output()?;
 
         // Print the standard output and standard error of the solc command
-        println!("solc stdout: {}", String::from_utf8_lossy(&output.stdout));
-        println!("solc stderr: {}", String::from_utf8_lossy(&output.stderr));
+        // Create owned strings from the trimmed stdout and stderr
+        let stdout = String::from_utf8_lossy(&output.stdout).trim_end().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim_end().to_string();
 
+        // Print the standard output of the solc command if not empty
+        if !stdout.is_empty() {
+            println!("solc stdout: {}", stdout);
+        }
+
+        // Check if there is any standard error output before printing
+        if !stderr.is_empty() {
+            println!("solc stderr: {}", stderr);
+        }
+        // Check if the compilation was successful
+        if !output.status.success() {
+            let error_message = String::from_utf8_lossy(&output.stderr);
+            eprintln!("Failed to compile {}: {}", contract_file_path.display(), error_message);
+            
+            // Exit the program with a non-zero status code
+            exit(1);
+        }
         // Check if the compilation was successful
         if !output.status.success() {
             let error_message = String::from_utf8_lossy(&output.stderr);
@@ -168,19 +340,25 @@ fn compile_contracts(contracts_dir: &str, contract_names: &[String]) -> Result<(
             return Err(io::Error::new(io::ErrorKind::Other, "Compilation failed"));
         }
 
-        // List files in the contract build directory
-        let paths = fs::read_dir(&contract_build_dir)?;
-        for path in paths {
-            let path = path?.path();
-            let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+        // Collect all paths first
+        let paths: Vec<_> = fs::read_dir(&contract_build_dir)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
 
-            // Check if the file is .bin or .abi and rename it
-            if filename.ends_with(".bin") || filename.ends_with(".abi") {
-                let extension = path.extension().unwrap().to_str().unwrap();
-                let new_filename = format!("{}.{}", contract_base_name, extension);
-                let new_path = path.with_file_name(new_filename);
-                fs::rename(&path, &new_path)?;
-                println!("Renamed {} to {}", path.display(), new_path.display());
+        // Process the files for renaming
+        for path in paths {
+            if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
+                // Check if the file is .bin or .abi and rename it
+                if (filename.ends_with(".bin") || filename.ends_with(".abi")) && !filename.starts_with(&contract_base_name) {
+                    let extension = path.extension().unwrap().to_str().unwrap();
+                    let new_filename = format!("{}.{}", contract_base_name, extension);
+                    let new_path = path.with_file_name(new_filename);
+
+                    // Perform the rename
+                    fs::rename(&path, &new_path)?;
+                    println!("Renamed {} to {}", path.display(), new_path.display());
+                }
             }
         }
     }
@@ -189,44 +367,34 @@ fn compile_contracts(contracts_dir: &str, contract_names: &[String]) -> Result<(
 }
 
 fn deploy_contracts<'a>(
-    contract_names: &[String],
+    contracts_data: &mut ContractsData,
     executor: &mut StackExecutor<'a, 'a, MemoryStackState<'a, 'a, MemoryBackend<'a>>, ()>,
     sender: H160,
-    contract_addresses: &mut HashMap<String, H160>,
 ) -> Result<(), io::Error> {
-    for contract_name in contract_names {
-        let contract_base_name = Path::new(contract_name)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid contract file name"))?
-            .to_string();
+    // Initialize sender's nonce
+    let mut sender_nonce = U256::zero();
 
-        // Construct the paths for the .bin and .abi files
-        let bytecode_path = format!("./build/contracts/{}/{}.bin", contract_base_name, contract_base_name);
-        let abi_path = format!("./build/contracts/{}/{}.abi", contract_base_name, contract_base_name);
-
+    for (contract_name, contract_data) in contracts_data.iter_mut() {
+        // Load bytecode
+        let bytecode_path = format!("./build/contracts/{}/{}.bin", contract_name, contract_name);
         println!("Looking for bytecode at: {}", bytecode_path);
         let bytecode_path = fs::canonicalize(&bytecode_path)?;
-        let abi_path = fs::canonicalize(&abi_path)?;
-
         println!("Reading bytecode from: {}", bytecode_path.display());
-        println!("Reading ABI from: {}", abi_path.display());
-
-        // Read the contract bytecode from the .bin file
         let mut bytecode = fs::read_to_string(&bytecode_path)
-            .map_err(|e| io::Error::new(io::ErrorKind::NotFound, e.to_string()))?;
+            .map_err(|e| io::Error::new(io::ErrorKind::NotFound, e.to_string()))?
+            .trim_end()
+            .to_string();
 
         // Decode the hex bytecode
-        let mut bytecode = hex::decode(bytecode.trim_end())
+        let mut bytecode = hex::decode(bytecode)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        // Parse the ABI
-        let contract = parse_abi(abi_path.to_str().unwrap())?;
+        // Get constructor parameters from contract_data.abi
+        if let Some(constructor) = contract_data.abi.constructor() {
+            let params = &constructor.inputs;
 
-        // Get constructor parameters
-        if let Some(params) = get_constructor_params(&contract) {
             // Ask for constructor args
-            let args = ask_for_constructor_args(&params.iter().map(|p| p.kind.clone()).collect::<Vec<_>>())?;
+            let args = ask_for_function_inputs(&params.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(), sender)?;
 
             // Encode constructor args
             let encoded_args = encode_constructor_args(&params.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(), args)?;
@@ -244,16 +412,22 @@ fn deploy_contracts<'a>(
             Vec::new(), // access_list
         );
 
+        sender_nonce = sender_nonce + U256::one();
+        
         // Check if the transaction was successful
         if let ExitReason::Succeed(_) = exit_reason {
-            // Compute the contract address
-            let contract_address = compute_contract_address(sender, U256::from(contract_addresses.len() as u64));
-            println!("Contract {} deployed at: {:?}", contract_name, contract_address);
+            // Use sender_nonce to compute the contract address
+            let contract_address = compute_contract_address(sender, sender_nonce);
+            println!("Contract {} deployed at: {:?}\n", contract_name, contract_address);
 
-            // Update the map with the contract name and address
-            contract_addresses.insert(contract_name.clone(), contract_address);
+            // Update the address in contract_data
+            contract_data.address = Some(contract_address);
+
+            // Increment sender's nonce for the next contract
+            sender_nonce += U256::one();
         } else {
             eprintln!("Failed to deploy contract {}: {:?}", contract_name, exit_reason);
+            return Err(io::Error::new(io::ErrorKind::Other, "Contract deployment failed"));
         }
     }
 
@@ -261,12 +435,13 @@ fn deploy_contracts<'a>(
 }
 
 // https://github.com/rust-blockchain/evm-tests
-fn main() {
+fn main() -> Result<(), io::Error> {
 
     let contracts_dir = "./contracts"; // Path to the contracts directory
     let mut contract_names = Vec::new(); 
-    let mut contract_addresses = HashMap::new();
-
+    let mut contract_addresses: HashMap<String, ContractData> = HashMap::new();
+    let deployer_address = H160::random();
+    
     match collect_contract_names(contracts_dir) {
         Ok(names) => {
             contract_names = names; // Assign the names here
@@ -274,6 +449,7 @@ fn main() {
             for contract in &contract_names {
                 println!("{}", contract);
             }
+            println!("\n");
 
             // Compile the contracts
             match compile_contracts(contracts_dir, &contract_names) {
@@ -285,57 +461,7 @@ fn main() {
             eprintln!("Error: {}", e);
         }
     }
-
-
-
-    let contract_bytecode_hex = "608060405234801562000010575f80fd5b5060405162000b9038038062000b908339818101604052810190620000369190620001d3565b805f908162000046919062000459565b50506200053d565b5f604051905090565b5f80fd5b5f80fd5b5f80fd5b5f80fd5b5f601f19601f8301169050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b620000af8262000067565b810181811067ffffffffffffffff82111715620000d157620000d062000077565b5b80604052505050565b5f620000e56200004e565b9050620000f38282620000a4565b919050565b5f67ffffffffffffffff82111562000115576200011462000077565b5b620001208262000067565b9050602081019050919050565b5f5b838110156200014c5780820151818401526020810190506200012f565b5f8484015250505050565b5f6200016d6200016784620000f8565b620000da565b9050828152602081018484840111156200018c576200018b62000063565b5b620001998482856200012d565b509392505050565b5f82601f830112620001b857620001b76200005f565b5b8151620001ca84826020860162000157565b91505092915050565b5f60208284031215620001eb57620001ea62000057565b5b5f82015167ffffffffffffffff8111156200020b576200020a6200005b565b5b6200021984828501620001a1565b91505092915050565b5f81519050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52602260045260245ffd5b5f60028204905060018216806200027157607f821691505b6020821081036200028757620002866200022c565b5b50919050565b5f819050815f5260205f209050919050565b5f6020601f8301049050919050565b5f82821b905092915050565b5f60088302620002eb7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff82620002ae565b620002f78683620002ae565b95508019841693508086168417925050509392505050565b5f819050919050565b5f819050919050565b5f620003416200033b62000335846200030f565b62000318565b6200030f565b9050919050565b5f819050919050565b6200035c8362000321565b620003746200036b8262000348565b848454620002ba565b825550505050565b5f90565b6200038a6200037c565b6200039781848462000351565b505050565b5b81811015620003be57620003b25f8262000380565b6001810190506200039d565b5050565b601f8211156200040d57620003d7816200028d565b620003e2846200029f565b81016020851015620003f2578190505b6200040a62000401856200029f565b8301826200039c565b50505b505050565b5f82821c905092915050565b5f6200042f5f198460080262000412565b1980831691505092915050565b5f6200044983836200041e565b9150826002028217905092915050565b620004648262000222565b67ffffffffffffffff81111562000480576200047f62000077565b5b6200048c825462000259565b62000499828285620003c2565b5f60209050601f831160018114620004cf575f8415620004ba578287015190505b620004c685826200043c565b86555062000535565b601f198416620004df866200028d565b5f5b828110156200050857848901518255600182019150602085019450602081019050620004e1565b8683101562000528578489015162000524601f8916826200041e565b8355505b6001600288020188555050505b505050505050565b610645806200054b5f395ff3fe608060405234801561000f575f80fd5b5060043610610034575f3560e01c80633d7403a314610038578063e21f37ce14610054575b5f80fd5b610052600480360381019061004d919061025c565b610072565b005b61005c610084565b604051610069919061031d565b60405180910390f35b805f90816100809190610540565b5050565b5f80546100909061036a565b80601f01602080910402602001604051908101604052809291908181526020018280546100bc9061036a565b80156101075780601f106100de57610100808354040283529160200191610107565b820191905f5260205f20905b8154815290600101906020018083116100ea57829003601f168201915b505050505081565b5f604051905090565b5f80fd5b5f80fd5b5f80fd5b5f80fd5b5f601f19601f8301169050919050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b61016e82610128565b810181811067ffffffffffffffff8211171561018d5761018c610138565b5b80604052505050565b5f61019f61010f565b90506101ab8282610165565b919050565b5f67ffffffffffffffff8211156101ca576101c9610138565b5b6101d382610128565b9050602081019050919050565b828183375f83830152505050565b5f6102006101fb846101b0565b610196565b90508281526020810184848401111561021c5761021b610124565b5b6102278482856101e0565b509392505050565b5f82601f83011261024357610242610120565b5b81356102538482602086016101ee565b91505092915050565b5f6020828403121561027157610270610118565b5b5f82013567ffffffffffffffff81111561028e5761028d61011c565b5b61029a8482850161022f565b91505092915050565b5f81519050919050565b5f82825260208201905092915050565b5f5b838110156102da5780820151818401526020810190506102bf565b5f8484015250505050565b5f6102ef826102a3565b6102f981856102ad565b93506103098185602086016102bd565b61031281610128565b840191505092915050565b5f6020820190508181035f83015261033581846102e5565b905092915050565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52602260045260245ffd5b5f600282049050600182168061038157607f821691505b6020821081036103945761039361033d565b5b50919050565b5f819050815f5260205f209050919050565b5f6020601f8301049050919050565b5f82821b905092915050565b5f600883026103f67fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff826103bb565b61040086836103bb565b95508019841693508086168417925050509392505050565b5f819050919050565b5f819050919050565b5f61044461043f61043a84610418565b610421565b610418565b9050919050565b5f819050919050565b61045d8361042a565b6104716104698261044b565b8484546103c7565b825550505050565b5f90565b610485610479565b610490818484610454565b505050565b5b818110156104b3576104a85f8261047d565b600181019050610496565b5050565b601f8211156104f8576104c98161039a565b6104d2846103ac565b810160208510156104e1578190505b6104f56104ed856103ac565b830182610495565b50505b505050565b5f82821c905092915050565b5f6105185f19846008026104fd565b1980831691505092915050565b5f6105308383610509565b9150826002028217905092915050565b610549826102a3565b67ffffffffffffffff81111561056257610561610138565b5b61056c825461036a565b6105778282856104b7565b5f60209050601f8311600181146105a8575f8415610596578287015190505b6105a08582610525565b865550610607565b601f1984166105b68661039a565b5f5b828110156105dd578489015182556001820191506020850194506020810190506105b8565b868310156105fa57848901516105f6601f891682610509565b8355505b6001600288020188555050505b50505050505056fea2646970667358221220815e220e3bdf5fed30260a091bab30efda9ab9cf84034796b57b5d57534888ec64736f6c63430008170033";
     
-    // Offset to the location of the data part of the string (32 bytes, since strings are dynamically sized)
-    // Length of the string (13 bytes for "Hello, World!")
-    // The string "Hello, World!" UTF-8 encoded, right-padded to 32 bytes
-    
-    let init_message_encoded = "\
-        0000000000000000000000000000000000000000000000000000000000000020\
-        000000000000000000000000000000000000000000000000000000000000000d\
-        48656c6c6f2c20576f726c642100000000000000000000000000000000000000\
-    ";
-    let combined_bytecode_hex = format!("{}{}", contract_bytecode_hex, init_message_encoded);
-    let contract_bytecode = match hex::decode(combined_bytecode_hex) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            eprintln!("Error decoding hex: {}", e);
-            return;
-        }
-    };
-
-    
-    let coinbase_address = H160::random();
-    let deployer_address = H160::random();
-    let mut account1 = H160::random();
-    let account2 = H160::random();
-    let address = H160::random(); // Randomly generate an address for the contract
-    let wei_per_ether = 1_000_000_000_000_000_000u64;
-    let gas_per_block = 40_000_000;
-    
-    let contract_address = compute_contract_address(account1, U256::zero());
-    println!("Contract Address: {:?}", contract_address);
-
-
-    // The Vicinity basically seems to be metadata of the block that the transaction/VM will be run in.
-    let vicinity = evm::backend::MemoryVicinity {
-        gas_price: U256::from(1),
-        origin: H160::default(),
-        block_hashes: Vec::new(),
-        block_number: U256::zero(), 
-        block_coinbase: H160::from(coinbase_address),
-        block_timestamp: U256::from(1_000_000_000),
-        block_difficulty: U256::from(20_000_000_000_000_000u64),
-        block_gas_limit: U256::from(20_000_000_000_000_000u64),
-        chain_id: U256::from(1337),
-        block_base_fee_per_gas: U256::from(1),
-        // Litheum will provide this via the algorithm designed in the white paper (similar to Slasher)
-        block_randomness: Default::default(), // Provide appropriate randomness
-    };
 	let vicinity = evm::backend::MemoryVicinity {
 		gas_price: U256::zero(),
 		origin: H160::default(),
@@ -418,80 +544,100 @@ fn main() {
     account.basic.nonce = U256::from(0);
     account.basic.balance = U256::max_value();
     println!("deployer_address account {:?}", account);
-    
-
-    
+        
     let mut executor = StackExecutor::<'_, '_, _, _>::new_with_precompiles(stack_state, &config, &precompiles);
 
+    // Compile contracts and deploy them
+    compile_contracts(contracts_dir, &contract_names).expect("Failed to compile contracts");
+
+    let mut contracts_data: ContractsData = HashMap::new();
+
+    // Load ABIs and create ContractData entries
+    for contract_name in &contract_names {
+        // Extract the contract base name without the .sol extension
+        let contract_base_name = Path::new(contract_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Invalid contract file name"))?
+            .to_string();
+    
+        let abi_path = format!("./build/contracts/{}/{}.abi", contract_base_name, contract_base_name);
+        println!("ABI path: {}", abi_path); // Add this line
+        let abi = parse_abi(&abi_path).expect("Failed to parse ABI");
+    
+        contracts_data.insert(contract_base_name.clone(), ContractData {
+            address: None,  // Address to be filled in after deployment
+            abi,
+        });
+    }
     if let Err(e) = deploy_contracts(
-        &contract_names,
-        &mut executor, // Assuming you have your executor initialized
-        deployer_address, // The sender's address
-        &mut contract_addresses, // Map to store contract addresses
+        &mut contracts_data,
+        &mut executor,
+        deployer_address,
     ) {
         eprintln!("Error deploying contracts: {}", e);
     }
 
+    // Interaction loop
+    loop {
+        // Ask the user which contract they want to interact with
+        let chosen_contract_name = choose_contract(&contracts_data).expect("Failed to choose a contract");
 
-    // let transact_create_data = executor.transact_create(
-    //     account1, U256::zero(), contract_bytecode, u64::MAX, Default::default()
-    // );
-    //let transact_create_data = executor.transact_create2(account1, U256::zero(), contract_bytecode.into(), H256::zero(), u64::MAX, Default::default());
+        // Get the chosen contract data
+        let contract_data = contracts_data.get(&chosen_contract_name).expect("Contract not found");
 
-    // match transact_create_data {
-    //     (ExitReason::Succeed(_), create_data ) =>  {
-    //         println!("create_data {:?}", &create_data.len());
+        // Ask the user which function of the contract they want to call
+        let chosen_function_name = choose_function(&contract_data.abi).expect("Failed to choose a function");
 
-    //         // Assuming the function signature for "update" is "update(string)"
-    //         // update(string memory newMessage) public
-    //         let function_signature = "update(string)";
-
-    //         // Create a new Keccak256 hasher
-    //         let mut hasher = Keccak256::new();
-    //         // Write input message
-    //         hasher.update(function_signature);
-    //         // Obtain the function selector (first 4 bytes of the hash)
-    //         let function_selector = &hasher.finalize()[..4];
-            
-    //         let new_message_str = "Hello, WeiTang!"; // The new message
-    //         let new_message_len = new_message_str.len();
-    //         let new_message_encoded = format!(
-    //             "{:064x}{:064x}{}",
-    //             32, // Offset to the start of the data part of the string (32 bytes, since strings are dynamically sized)
-    //             new_message_len, // Length of the string
-    //             hex::encode(new_message_str) // The string UTF-8 encoded, right-padded to 32 bytes
-    //         );
-
-    //         // Note: Properly encoding the string as per ABI specifications is required here
-    //         // Create the transaction data by concatenating the function selector and encoded message
-    //         // let transaction_data = [function_selector, new_message.as_bytes()].concat();
-
-    //         // Combine the function selector and the encoded message
-    //         let transaction_data_hex = format!("{}{}", hex::encode(function_selector), new_message_encoded);
-    //         let transaction_data = hex::decode(transaction_data_hex).expect("Decoding failed");
-
-    //         // Execute the transaction
-    //         let result = executor.transact_call(address, contract_address, U256::zero(), transaction_data, u64::MAX, Default::default());
-
-    //         match result {
-    //             (Succeed(_), _ ) => println!("Transaction successful!"),
-    //             (ExitReason::Error(exit_error), why) => println!("Transaction failed! {:?} {:?}", exit_error, why),
-    //             (ExitReason::Revert(exit_reason), _) => println!("Transaction reverted {:?}",exit_reason),
-    //             (ExitReason::Fatal(_), _) => println!("Transaction failed fatally!")
-    //         }
-
-    //     }
-    //     (ExitReason::Error(exit_reason),_)=> {
-    //         println!("create contract transaction error:\n     {:?}", &exit_reason);
-    //     }
-    //     (ExitReason::Revert(exit_reason),_)=> {
-    //         println!("create contract reverted:\n     {:?}", &exit_reason);
-    //     }
-    //     (ExitReason::Fatal(exit_reason),_)=> {
-    //         println!("create contract transaction fatal:\n     {:?}", &exit_reason);
-    //     }
+        // Get the chosen function
+        let (chosen_function_name, is_getter, return_types) = choose_function(&contract_data.abi)?;
+        let function = contract_data.abi.function(&chosen_function_name).expect("Function not found");
         
+        // Ask for function inputs
+        let inputs = ask_for_function_inputs(
+            &function.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(),
+            deployer_address
+        ).expect("Failed to get function inputs");
+
+        // Encode function inputs
+        let encoded_inputs = encode_constructor_args(
+            &function.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(),
+            inputs
+        ).expect("Failed to encode inputs");
+
+        // Call the function (you'll need to implement this part based on your requirements)
+        // call_contract_function(&executor, &contract_data.address.expect("Address not set"), &function, &encoded_inputs);
+
+        // Optionally, you can add some logic to break the loop or continue based on user input or function call results.
+    }
+
+
+    // loop {
+    //     // Let the user choose a contract
+    //     let contract_name = choose_contract(&contracts_data)?;
+    //     let contract_data = contracts_data.get(&contract_name).ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Contract not found"))?;
+
+    //     // Let the user choose a function from the ABI
+    //     let function_name = choose_function(&contract_data.abi)?;
+
+    //     // Get the function from the ABI
+    //     let function = contract_data.abi.function(&function_name).map_err(|_| io::Error::new(io::ErrorKind::NotFound, "Function not found in ABI"))?;
+
+    //     // Ask for input parameters for the chosen function
+    //     // TODO: Implement a function to ask for parameters based on the function inputs
+    //     // let inputs = ask_for_function_inputs(&function.inputs)?;
+
+    //     // Encode the function call with the provided parameters
+    //     // let data = function.encode_input(&inputs).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+
+    //     // TODO: Call the function with the provided parameters
+    //     // You need to implement the logic to send the transaction to the blockchain
+    //     // call_function(contract_data.address, data)?;
+            
     // }
+
+
+    Ok(())
 }
 
 
