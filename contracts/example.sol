@@ -22,6 +22,10 @@ contract HelloWorld {
         data = initData;
     }
 
+    function getTest() pure public returns(uint) {
+        return 42;
+    }
+
     function updateMessage(string memory newMessage) public {
         message = newMessage;
     }
