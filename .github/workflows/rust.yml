@@ -35,9 +35,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - uses: subosito/flutter-action@v2
       - uses: webfactory/ssh-agent@v0.5.4
         with:
           ssh-private-key: ${{ secrets.SSH_PRIV_KEY }}
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+      - name: install ffigen
+        run: dart pub global activate ffigen --version 5.0.1
       - name: Update Rust
         run: rustup update
       - name: Check Rust version
@@ -53,6 +58,7 @@ jobs:
     name: Code coverage report
     runs-on: ubuntu-latest
     steps:
+      
       - name: Checkout repository
         uses: actions/checkout@v2
 
