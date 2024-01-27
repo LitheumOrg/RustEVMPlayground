@@ -33,7 +33,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command, exit};
 
-
 struct ContractData {
     address: Option<H160>,
     abi: Contract,
@@ -65,6 +64,7 @@ impl Account {
         self.code.len() == 0 && self.storage.len() == 0
     }
 }
+
 pub struct MockBlock {
     pub block_hash: H256,
     pub block_number: U256,
@@ -77,11 +77,11 @@ pub struct MockBlock {
     pub chain_id: U256,
 }
 struct MyBackend {
-    //accounts: BTreeMap<H160, Account>,
     // You can maintain a HashMap to store original storage values.
     original_storage_map: HashMap<(H160, H256), H256>,
     // You can add a cold flag to the Account struct.
     accounts: BTreeMap<H160, Account>,
+    // mock_block field
     mock_block: MockBlock, // Add mock_block field
 }
 
@@ -107,41 +107,45 @@ impl MyBackend {
     }
 }
 
-
 impl RuntimeBaseBackend for MyBackend {
     fn balance(&self, address: H160) -> U256 {
+        println!("balance {:?}", address);
         self.accounts.get(&address).map_or(U256::zero(), |account| account.balance)
     }
 
     fn code(&self, address: H160) -> Vec<u8> {
+        println!("code {:?}", address);
         self.accounts.get(&address).map_or(Vec::new(), |account| account.code.clone())
     }
 
     fn storage(&self, address: H160, index: H256) -> H256 {
+        println!("storage {:?} {:?}", address, index);
         self.accounts.get(&address).and_then(|account| account.storage.get(&index)).cloned().unwrap_or_default()
     }
 
     fn exists(&self, address: H160) -> bool {
+        println!("exists {:?}", address);
         self.accounts.contains_key(&address)
     }
 
     fn nonce(&self, address: H160) -> U256 {
+        println!("nonce {}", address);
         self.accounts.get(&address).map_or(U256::zero(), |account| account.nonce)
     }
 }
 
-
 impl RuntimeBackend for MyBackend {
+    // Not sure what is this....
     fn original_storage(&self, address: H160, index: H256) -> H256 {
-        // Retrieve the original storage value from the map based on the provided address and index.
-        // Return the original storage value if it exists, or a default value if not found.
+        println!("original_storage {} {}", address, index);
         match self.original_storage_map.get(&(address, index)) {
             Some(&value) => value,
             None => H256::default(), // Return a default value if not found
         }
     }
-
+    // TODO This may not be correct, we need to flag things as deleted perhaps
     fn deleted(&self, address: H160) -> bool {
+        println!("deleted {}", address);
         // Implement the deleted method to check if the account is deleted.
         if let Some(account) = self.accounts.get(&address) {
             return account.is_empty();
@@ -150,35 +154,23 @@ impl RuntimeBackend for MyBackend {
     }
 
     fn is_cold(&self, address: H160, index: Option<H256>) -> bool {
+        println!("is_cold {} {:?}", address, index);
         // Implement the is_cold method to check if the account is cold.
         // You can use the `cold` flag in the Account struct to determine this.
         if let Some(account) = self.accounts.get(&address) {
-            if let Some(index) = index {
-                // Check if the index is cold (if applicable).
-                // You may need to modify this logic based on your requirements.
-                return account.cold && !account.storage.contains_key(&index);
-            } else {
-                // Check if the entire account is cold.
-                return account.cold;
-            }
+            return account.cold;
         }
-        false
+        true
     }
 
     fn mark_hot(&mut self, address: H160, index: Option<H256>) {
-        // Implement the mark_hot method to mark the account as hot (not cold).
-        // You can use the `cold` flag in the Account struct to update this.
+        println!("mark_hot {} {:?}", address, index);
         if let Some(account) = self.accounts.get_mut(&address) {
-            if let Some(index) = index {
-                // Mark the index as hot (if applicable).
-                // You may need to modify this logic based on your requirements.
-                account.cold = false;
-                account.storage.remove(&index);
-            } else {
-                // Mark the entire account as hot.
-                account.cold = false;
-                account.storage.clear();
-            }
+            account.cold = false;
+        } else {
+            // TODO throw an error? seems that Rust EVM does not care about this case,
+            // this function does not return a Result
+            // TODO log this case
         }
     }
 
@@ -188,7 +180,7 @@ impl RuntimeBackend for MyBackend {
         index: H256,
         value: H256
     ) -> Result<(), ExitError> {
-        println!("set storage");
+        println!("set storage {:?} {:?} {:?}", address, index, value);
         // Implement the set_storage method to set the storage value for the given address and key.
         // You may need to handle errors and update the original storage map.
         if let Some(account) = self.accounts.get_mut(&address) {
@@ -196,12 +188,12 @@ impl RuntimeBackend for MyBackend {
             self.original_storage_map.insert((address, index), value);
             Ok(())
         } else {
-            Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("Could not create storage"))))
+            Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("Could not set storage"))))
         }
     }
 
     fn log(&mut self, log: Log) -> Result<(), ExitError> {
-        
+        println!("log: {:?}", log);
         // Implement the log method to handle logs.
         // You may need to handle errors and perform necessary actions.
         // For example, you can store the log in your backend.
@@ -209,16 +201,14 @@ impl RuntimeBackend for MyBackend {
         unimplemented!()
     }
 
+    // TODO this is not correct, we need to flag things as deleted perhaps
     fn mark_delete(&mut self, address: H160) {
-        // Implement the mark_delete method to mark an account for deletion.
-        // You may need to update the account's status or perform necessary actions.
-        // For example, you can remove the account from your backend.
+        println!("mark_delete {}", address);
         self.accounts.remove(&address);
     }
 
     fn reset_storage(&mut self, address: H160) {
-        // Implement the reset_storage method to reset an account's storage.
-        // You may need to update the account's storage or perform necessary actions.
+        println!("reset_storage {}", address);
         if let Some(account) = self.accounts.get_mut(&address) {
             account.storage.clear();
         }
@@ -229,9 +219,7 @@ impl RuntimeBackend for MyBackend {
         address: H160,
         code: Vec<u8>
     ) -> Result<(), ExitError> {
-        println!("set_code");
-        // Implement the set_code method to set the code for the given address.
-        // You may need to handle errors and update the account's code.
+        println!("set_code {:?}", address);
         if let Some(account) = self.accounts.get_mut(&address) {
             account.code = code;
             Ok(())
@@ -241,11 +229,11 @@ impl RuntimeBackend for MyBackend {
     }
 
     fn reset_balance(&mut self, address: H160) {
-        println!("reset_balance");
-        // Implement the reset_balance method to reset an account's balance.
-        // You may need to update the account's balance or perform necessary actions.
+        println!("reset_balance {}", address);
         if let Some(account) = self.accounts.get_mut(&address) {
             account.balance = U256::zero();
+        } else {
+            // TODO log this case
         }
     }
 
@@ -289,8 +277,7 @@ impl RuntimeBackend for MyBackend {
     fn inc_nonce(&mut self, address: H160) -> Result<(), ExitError> {
         // Implement the inc_nonce method to increment an account's nonce.
         // You may need to handle errors and update the account's nonce.
-        println!("self.accounts.len {}", self.accounts.len());
-        println!("address {:?}", address);
+        println!("inc_nonce {:?}", address);
         if let Some(account) = self.accounts.get_mut(&address) {
             account.nonce += U256::one();
             Ok(())
@@ -304,18 +291,18 @@ impl RuntimeBackend for MyBackend {
     // ...
 }
 
-
-
 struct MyPrecompileSet;
 
 impl<S, H> PrecompileSet<S, H> for MyPrecompileSet {
     fn execute(
         &self,
         code_address: H160,
-        input: &[u8],
+        _input: &[u8],
         _state: &mut S,
         _handler: &mut H
     ) -> Option<(ExitResult, Vec<u8>)> {
+        println!("execute precompile... {:?}", code_address);
+        
         match code_address {
             // Define your precompile addresses and logic here
             _ => None,
@@ -323,68 +310,58 @@ impl<S, H> PrecompileSet<S, H> for MyPrecompileSet {
     }
 }
 
-// Usage
-
 // Implement the RuntimeEnvironment trait for MyBackend using the mock block
 impl RuntimeEnvironment for MyBackend {
     fn block_hash(&self, number: U256) -> H256 {
         println!("block_hash {}", self.mock_block.block_hash);
-        // Return the block hash from the mock block
         self.mock_block.block_hash
     }
 
     fn block_number(&self) -> U256 {
-        // Return block number 0 for the mock block
         U256::zero()
     }
 
     fn block_coinbase(&self) -> H160 {
         println!("block_coinbase {}", self.mock_block.block_coinbase);
-        // Return the coinbase address from the mock block
         self.mock_block.block_coinbase
     }
 
     fn block_timestamp(&self) -> U256 {
-        // Return the timestamp from the mock block
         self.mock_block.block_timestamp
     }
 
     fn block_difficulty(&self) -> U256 {
-        // Return the difficulty from the mock block
         self.mock_block.block_difficulty
     }
 
     fn block_randomness(&self) -> Option<H256> {
-        // Return the randomness from the mock block
         println!("block_randomness {:?}", self.mock_block.block_randomness);
         self.mock_block.block_randomness
     }
 
     fn block_gas_limit(&self) -> U256 {
-        // Return the gas limit from the mock block
         self.mock_block.block_gas_limit
     }
 
     fn block_base_fee_per_gas(&self) -> U256 {
-        // Return the base fee per gas from the mock block
         self.mock_block.block_base_fee_per_gas
     }
 
     fn chain_id(&self) -> U256 {
-        // Return the chain ID from the mock block
         self.mock_block.chain_id
     }
 }
 
-
 impl TransactionalBackend for MyBackend {
     fn push_substate(&mut self) {
+        println!("push_substate");
         // Implement logic to create a new substate
         // This could involve taking a snapshot of the current state
         // so that it can be restored if needed.
     }
 
     fn pop_substate(&mut self, strategy: MergeStrategy) {
+        println!("pop_substate");
         // Implement logic to either commit or revert the changes in the substate
         // based on the provided strategy.
         match strategy {
@@ -512,12 +489,17 @@ fn choose_function(abi: &ethabi::Contract) -> Result<(String, bool, Vec<ParamTyp
     }
 }
 
-fn call_contract_function<'a>(
+fn call_contract_function<'a, 'b, 'c>(
     contract_data: &ContractData,
     function_name: &str,
     encoded_inputs: Vec<u8>,
-    caller_address: H160,   // Caller's address
-) -> Result<(), io::Error> {
+    backend: &mut MyBackend,
+    caller: &mut Account,
+    invoker: &Invoker<'a, 'b, EtableResolver<'a, 'b, 'c, MyPrecompileSet, evm::Etable<evm::standard::State<'c>, MyBackend, evm::trap::CallCreateTrap>>>,
+) -> Result<Option<H160>, std::io::Error>
+where
+    'a: 'c, 
+{
     
     let function = contract_data
         .abi
@@ -535,33 +517,31 @@ fn call_contract_function<'a>(
     let data = [function_selector.to_vec(), encoded_inputs].concat();
 
     println!("stack data: {:?}", data);
-    Ok(())
-    // Execute the function call
-    // let (exit_reason, output) = executor.transact_call(
-    //     caller_address,
-    //     contract_data.address.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Contract address not set"))?,
-    //     U256::zero(), // value sent with the call
-    //     data,
-    //     u64::MAX, // gas_limit
-    //     Vec::new(), // access_list
-    // );
-    // match exit_reason {
-    //     ExitReason::Succeed(_) => {
-    //         // Decode the function output if there is any
-    //         let decoded_output = if !output.is_empty() {
-    //             function.decode_output(&output).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
-    //         } else {
-    //             Vec::new()
-    //         };
-    //         println!("Raw output: {:?}", output);
-    //         println!("Output    : {:?}", decoded_output);
-    //         Ok(decoded_output)
-    //     }
-    //     _ => {
-    //         eprintln!("Call failed: {:?}", exit_reason);
-    //         Err(io::Error::new(io::ErrorKind::Other, "Call failed"))
-    //     }
-    // }
+
+    let call_args = TransactArgs::Call {
+        caller: caller.address,
+        address: contract_data.address.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Contract address not set"))?,
+        value: U256::zero(),
+        data,
+        gas_limit: U256::from(1_000_000_000_000u64),
+        gas_price: U256::from(1),
+        access_list: Vec::new(),
+    };
+
+    // Execute the transaction
+    let result = evm::transact(
+        call_args,
+        None, // or Some(heap_depth) if needed
+        backend,
+        invoker,
+    );
+
+    // Handle the result
+    match result {
+        Ok((ExitSucceed::Returned, output)) => Ok(output),
+        Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Unexpected result")),
+        Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("Call failed: {:?}", e))),
+    }
 }
 
 fn ask_for_function_inputs(params: &[ParamType], deployer_address: H160) -> Result<Vec<String>, io::Error> {
@@ -992,50 +972,44 @@ fn main() -> Result<(), io::Error> {
     }
 
     // Interaction loop
-    // loop {
-    //     // Ask the user which contract they want to interact with
-    //     let chosen_contract_name = choose_contract(&contracts_data).expect("Failed to choose a contract");
+    loop {
+        // Ask the user which contract they want to interact with
+        let chosen_contract_name = choose_contract(&contracts_data).expect("Failed to choose a contract");
 
-    //     // Get the chosen contract data
-    //     let contract_data = contracts_data.get(&chosen_contract_name).expect("Contract not found");
+        // Get the chosen contract data
+        let contract_data = contracts_data.get(&chosen_contract_name).expect("Contract not found");
 
-    //     // Ask the user which function of the contract they want to call
-    //     println!("\nAvailable functions:");
-    //     let (chosen_function_name, _is_getter, _return_types) = choose_function(&contract_data.abi).expect("Failed to choose a function");
+        // Ask the user which function of the contract they want to call
+        println!("\nAvailable functions:");
+        let (chosen_function_name, _is_getter, _return_types) = choose_function(&contract_data.abi).expect("Failed to choose a function");
 
-    //     // Get the function so we can iterate over it's inputs
-    //     let function = contract_data.abi.function(&chosen_function_name).expect("Function not found");
+        // Get the function so we can iterate over it's inputs
+        let function = contract_data.abi.function(&chosen_function_name).expect("Function not found");
         
-    //     // Ask for constructor args
-    //     let args = ask_for_function_inputs(&function.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(), deployer.address)?;
+        // Ask for constructor args
+        let args = ask_for_function_inputs(&function.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(), deployer.address)?;
 
-    //     // Encode constructor args
-    //     let encoded_args = encode_function_args(&function.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(), args)?;
+        // Encode constructor args
+        let encoded_args = encode_function_args(&function.inputs.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(), args)?;
 
-    //     // Call the function
-    //     match call_contract_function(&mut executor, contract_data, &chosen_function_name, encoded_args, deployer.address) {
-    //         Ok(output) => {
-    //             println!("Function call was successful. Output: {:?}", output);
-    //         },
-    //         Err(e) => {
-    //             eprintln!("Function call failed: {}", e);
-    //             exit(1);
-    //         }
-    //     }
-    // }
-
-
-    // Define the transaction arguments
-
-    // define a string called foo:
-    // let foo = "bar";
-    // evm::transact<H, Tr, I>(
-    //     args: I::TransactArgs,
-    //     heap_depth: Option<usize>,
-    //     backend: &mut H,
-    //     invoker: &I
-    // ) -> Result<I::TransactValue, ExitError>
-
+        // Call the function
+        match call_contract_function(
+            contract_data,
+            &chosen_function_name,
+            encoded_args,
+            &mut backend,
+            &mut deployer,
+            &invoker,
+        ) {
+            Ok(output) => {
+                println!("Function call was successful. Output: {:?}", output);
+            },
+            Err(e) => {
+                eprintln!("Function call failed: {}", e);
+                exit(1);
+            }
+        }
+    }
 
     #[allow(unreachable_code)] 
     Ok(())
