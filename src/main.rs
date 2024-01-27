@@ -6,25 +6,23 @@ use ethereum_types::{H160, U256, H256};
 
 use evm::backend::RuntimeBaseBackend;
 
-use evm::standard::Efn;
+
 use evm::standard::EtableResolver;
-use evm::standard::Resolver;
-use evm::standard::State;
-use evm::trap::CallCreateTrap;
 use evm::ExitError;
+use evm::ExitException;
 use evm::ExitFatal;
-use evm::ExitSucceed;
 use evm::standard::Config;
-// use evm::standard::Etable;
 use evm::standard::Invoker;
 use evm::standard::TransactArgs;
 use evm::ExitResult;
 use evm::standard::PrecompileSet;
 
+use evm::ExitSucceed;
 use evm::Log;
+use evm::MergeStrategy;
 use evm::RuntimeBackend;
 use evm::RuntimeEnvironment;
-use evm::RuntimeState;
+use evm::TransactionalBackend;
 use rlp::RlpStream;
 use sha3::{Digest, Keccak256};
 use std::borrow::Cow;
@@ -41,8 +39,7 @@ struct ContractData {
     abi: Contract,
 }
 
-
-
+#[derive(Clone, Debug)]
 struct Account {
     address: H160,
     balance: U256,
@@ -99,8 +96,9 @@ impl MyBackend {
             block_randomness: Some(H256::random()),
             block_gas_limit: U256::zero(),
             block_base_fee_per_gas: U256::zero(),
-            chain_id: U256::zero(),               // Mock chain ID
+            chain_id: U256::from(1337), 
         };
+        println!("coinbase {:?}", mock_block.block_coinbase);
         MyBackend {
             original_storage_map: HashMap::new(),
             accounts: BTreeMap::new(),
@@ -190,6 +188,7 @@ impl RuntimeBackend for MyBackend {
         index: H256,
         value: H256
     ) -> Result<(), ExitError> {
+        println!("set storage");
         // Implement the set_storage method to set the storage value for the given address and key.
         // You may need to handle errors and update the original storage map.
         if let Some(account) = self.accounts.get_mut(&address) {
@@ -202,6 +201,7 @@ impl RuntimeBackend for MyBackend {
     }
 
     fn log(&mut self, log: Log) -> Result<(), ExitError> {
+        
         // Implement the log method to handle logs.
         // You may need to handle errors and perform necessary actions.
         // For example, you can store the log in your backend.
@@ -229,6 +229,7 @@ impl RuntimeBackend for MyBackend {
         address: H160,
         code: Vec<u8>
     ) -> Result<(), ExitError> {
+        println!("set_code");
         // Implement the set_code method to set the code for the given address.
         // You may need to handle errors and update the account's code.
         if let Some(account) = self.accounts.get_mut(&address) {
@@ -240,6 +241,7 @@ impl RuntimeBackend for MyBackend {
     }
 
     fn reset_balance(&mut self, address: H160) {
+        println!("reset_balance");
         // Implement the reset_balance method to reset an account's balance.
         // You may need to update the account's balance or perform necessary actions.
         if let Some(account) = self.accounts.get_mut(&address) {
@@ -248,14 +250,28 @@ impl RuntimeBackend for MyBackend {
     }
 
     fn deposit(&mut self, target: H160, value: U256) {
-        // Implement the deposit method to deposit funds into an account.
-        // You may need to update the account's balance or perform necessary actions.
+        println!("deposit {} {}", target, value);
+        
+        // Check if the account already exists
         if let Some(account) = self.accounts.get_mut(&target) {
+            // Account exists, just update its balance
             account.balance += value;
+        } else {
+            // Account does not exist, create a new one with the given balance
+            let new_account = Account {
+                address: target,
+                balance: value,
+                nonce: U256::zero(),
+                code: Vec::new(),
+                storage: BTreeMap::new(),
+                cold: true,
+            };
+            self.accounts.insert(target, new_account);
         }
     }
 
     fn withdrawal(&mut self, source: H160, value: U256) -> Result<(), ExitError> {
+        println!("withdrawal");
         // Implement the withdrawal method to withdraw funds from an account.
         // You may need to handle errors and update the account's balance.
         if let Some(account) = self.accounts.get_mut(&source) {
@@ -263,24 +279,25 @@ impl RuntimeBackend for MyBackend {
                 account.balance -= value;
                 Ok(())
             } else {
-                Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("TODO"))))
+                Err(ExitError::Exception(ExitException::OutOfFund))
             }
         } else {
-            Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("TODO"))))
+            Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("OutOfGas - Account not found"))))
         }
     }
 
     fn inc_nonce(&mut self, address: H160) -> Result<(), ExitError> {
         // Implement the inc_nonce method to increment an account's nonce.
         // You may need to handle errors and update the account's nonce.
+        println!("self.accounts.len {}", self.accounts.len());
+        println!("address {:?}", address);
         if let Some(account) = self.accounts.get_mut(&address) {
             account.nonce += U256::one();
             Ok(())
         } else {
-            Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("TODO"))))
+            Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("account not found, inc_nonce"))))
         }
     }
-
 
     // Implement the rest of the required methods for the RuntimeBackend trait...
 
@@ -311,6 +328,7 @@ impl<S, H> PrecompileSet<S, H> for MyPrecompileSet {
 // Implement the RuntimeEnvironment trait for MyBackend using the mock block
 impl RuntimeEnvironment for MyBackend {
     fn block_hash(&self, number: U256) -> H256 {
+        println!("block_hash {}", self.mock_block.block_hash);
         // Return the block hash from the mock block
         self.mock_block.block_hash
     }
@@ -321,6 +339,7 @@ impl RuntimeEnvironment for MyBackend {
     }
 
     fn block_coinbase(&self) -> H160 {
+        println!("block_coinbase {}", self.mock_block.block_coinbase);
         // Return the coinbase address from the mock block
         self.mock_block.block_coinbase
     }
@@ -337,6 +356,7 @@ impl RuntimeEnvironment for MyBackend {
 
     fn block_randomness(&self) -> Option<H256> {
         // Return the randomness from the mock block
+        println!("block_randomness {:?}", self.mock_block.block_randomness);
         self.mock_block.block_randomness
     }
 
@@ -356,6 +376,37 @@ impl RuntimeEnvironment for MyBackend {
     }
 }
 
+
+impl TransactionalBackend for MyBackend {
+    fn push_substate(&mut self) {
+        // Implement logic to create a new substate
+        // This could involve taking a snapshot of the current state
+        // so that it can be restored if needed.
+    }
+
+    fn pop_substate(&mut self, strategy: MergeStrategy) {
+        // Implement logic to either commit or revert the changes in the substate
+        // based on the provided strategy.
+        match strategy {
+            MergeStrategy::Commit => {
+                println!("COMMIT");
+                // Commit changes made in the current substate
+                // This might involve applying the changes to the main state.
+            },
+            MergeStrategy::Revert => {
+                println!("REVERT");
+                // Revert changes made in the current substate
+                // This might involve restoring the state from the snapshot taken when
+                // the substate was created.
+            },
+            MergeStrategy::Discard => {
+                println!("DISCARD");
+                // Discard changes made in the current substate
+                // This might involve doing nothing.
+            },
+        }
+    }
+}
 
 type ContractsData = HashMap<String, ContractData>;
 
@@ -439,7 +490,6 @@ fn choose_function(abi: &ethabi::Contract) -> Result<(String, bool, Vec<ParamTyp
         })
         .collect();
 
-    
     for (i, (name, is_getter, return_types)) in functions_info.iter().enumerate() {
         let getter_marker = if *is_getter { " (getter)" } else { "" };
         let return_types_str = return_types.iter()
@@ -736,56 +786,75 @@ fn compile_contracts(contracts_dir: &str, contract_names: &[String]) -> Result<(
     Ok(())
 }
 
-fn deploy_contracts<'a, R>(
+fn deploy_contracts<'a, 'b, 'c>(
     contracts_data: &mut ContractsData,
-    backend: &mut MyBackend, // Use your custom backend type
+    backend: &mut MyBackend,
     deployer: &mut Account,
-    invoker: &Invoker<'_, '_, R>, // Assuming you have initialized an Invoker
-) -> Result<(), io::Error>
+    invoker: &Invoker<'a, 'b, EtableResolver<'a, 'b, 'c, MyPrecompileSet, evm::Etable<evm::standard::State<'c>, MyBackend, evm::trap::CallCreateTrap>>>,
+) -> Result<(), io::Error> 
 where
-    R: Resolver<MyBackend>,
+    'a: 'c, 
 {
     for (contract_name, contract_data) in contracts_data.iter_mut() {
         // Load bytecode
         let bytecode_path = format!("./build/contracts/{}/{}.bin", contract_name, contract_name);
-        let bytecode = fs::read(&bytecode_path)
-            .map_err(|e| io::Error::new(io::ErrorKind::NotFound, e.to_string()))?;
+        let bytecode_path = fs::canonicalize(&bytecode_path)?;
+        let bytecode = fs::read_to_string(&bytecode_path)
+            .map_err(|e| io::Error::new(io::ErrorKind::NotFound, e.to_string()))?
+            .trim_end()
+            .to_string();
 
+        // Decode the hex bytecode
+        let mut bytecode = hex::decode(bytecode)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+
+        // Get constructor parameters from contract_data.abi
+        if let Some(constructor) = contract_data.abi.constructor() {
+            let params = &constructor.inputs;
+
+            // Ask for constructor args
+            let args = ask_for_function_inputs(&params.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(), deployer.address)?;
+
+            // Encode constructor args
+            let encoded_args = encode_function_args(&params.iter().map(|p| p.kind.clone()).collect::<Vec<_>>(), args)?;
+
+            // Append encoded args to bytecode
+            bytecode.extend(encoded_args);
+        }
         // Create transaction arguments for contract creation
         let create_args = TransactArgs::Create {
             caller: deployer.address,
             value: U256::zero(),
             init_code: bytecode,
             salt: None,
-            gas_limit: U256::from(1_000_000),
+            gas_limit: U256::from(1_000_000_000_000_000_000u64),
             gas_price: U256::from(1),
             access_list: Vec::new(),
         };
 
         // Execute the transaction
-        // let result = evm::transact(
-        //     create_args,
-        //     None, // or Some(heap_depth) if needed
-        //     backend,
-        //     invoker,
-        // );
-
+        let result: Result<(ExitSucceed, Option<H160>), ExitError> = evm::transact(
+            create_args,
+            None, // or Some(heap_depth) if needed
+            backend,
+            invoker,
+        );
         // Handle the result
-        // match result {
-        //     Ok((ExitSucceed::Returned, Some(address))) => {
-        //         contract_data.address = Some(address);
-        //         println!("Contract {} deployed at address: {:?}", contract_name, address);
-        //     },
-        //     Ok((_, None)) => {
-        //         return Err(io::Error::new(io::ErrorKind::Other, "Deployment did not return an address"));
-        //     },
-        //     Err(e) => {
-        //         return Err(io::Error::new(io::ErrorKind::Other, format!("Deployment failed: {:?}", e)));
-        //     },
-        //     _ => {
-        //         return Err(io::Error::new(io::ErrorKind::Other, "Unexpected deployment result"));
-        //     }
-        // }
+        match result {
+            Ok((ExitSucceed::Returned, Some(address))) => {
+                contract_data.address = Some(address);
+                println!("Contract {} deployed at address: {:?}", contract_name, address);
+            },
+            Ok((_, None)) => {
+                return Err(io::Error::new(io::ErrorKind::Other, "Deployment did not return an address"));
+            },
+            Err(e) => {
+                return Err(io::Error::new(io::ErrorKind::Other, format!("Deployment failed: {:?}", e)));
+            },
+            _ => {
+                return Err(io::Error::new(io::ErrorKind::Other, "Unexpected deployment result"));
+            }
+        }
 
         // Increment the nonce for the deployer account
         deployer.nonce += U256::one();
@@ -798,29 +867,21 @@ where
 // https://github.com/rust-blockchain/evm-tests
 fn main() -> Result<(), io::Error> {
 
-
-
-
-
     let contracts_dir = "./contracts"; 
     let contract_names ; 
     let mut contracts_data: ContractsData = HashMap::new();
-    let deployer_address = H160::random(); // or any specific address
+    let deployer_address = H160::random();
     let mut deployer = Account::new(deployer_address);
-    // let mut deployer = Account {
-    //     address: H160::random(),
-    //     nonce: U256::zero(),
-    // };
-      
+    println!("deployer address {:?}", deployer.address);
+
     // give gas to the deployer
-    
     deployer.balance = U256::max_value();
-    // // Make it rain for the deployer
-    // let account = stack_state.account_mut(deployer.address);
-    // account.basic.balance = U256::max_value();
-    // account.basic.nonce = U256::from(0);
     
-    
+    // Add deployer to Backend
+    // TODO actually manage accounts properly in backend, don't clone things and let the backend keep the state
+    let mut backend = MyBackend::new();
+    backend.accounts.insert(deployer.address, deployer.clone());
+
     // Find the contracts in the contracts directory
     match collect_contract_names(contracts_dir) {
         Ok(names) => {
@@ -857,92 +918,78 @@ fn main() -> Result<(), io::Error> {
         });
     }
 
+    // let create_args = TransactArgs::Create {
+    //     caller: H160::random(), // The address of the account initiating the transaction
+    //     value: U256::from(0), // The amount of ETH to send with the contract creation
+    //     init_code: Vec::new(), // The initialization code of the contract being created
+    //     salt: None, // Optional salt for creating the contract (used in create2)
+    //     gas_limit: U256::from(1_000_000), // The gas limit for the transaction
+    //     gas_price: U256::from(1), // The gas price for the transaction
+    //     access_list: Vec::new(), // EIP-2930 access list
+    // };
 
-
-    let create_args = TransactArgs::Create {
-        caller: H160::random(), // The address of the account initiating the transaction
-        value: U256::from(0), // The amount of ETH to send with the contract creation
-        init_code: Vec::new(), // The initialization code of the contract being created
-        salt: None, // Optional salt for creating the contract (used in create2)
-        gas_limit: U256::from(1_000_000), // The gas limit for the transaction
-        gas_price: U256::from(1), // The gas price for the transaction
-        access_list: Vec::new(), // EIP-2930 access list
-    };
-
-    let call_args = TransactArgs::Call {
-        caller: H160::random(), // The address of the account initiating the transaction
-        address: H160::random(), // The address of the contract being called
-        value: U256::from(0), // The amount of ETH to send with the call
-        data: Vec::new(), // The input data for the call
-        gas_limit: U256::from(1_000_000), // The gas limit for the transaction
-        gas_price: U256::from(1), // The gas price for the transaction
-        access_list: Vec::new(), // EIP-2930 access list
-    };
+    // let call_args = TransactArgs::Call {
+    //     caller: H160::random(), // The address of the account initiating the transaction
+    //     address: H160::random(), // The address of the contract being called
+    //     value: U256::from(0), // The amount of ETH to send with the call
+    //     data: Vec::new(), // The input data for the call
+    //     gas_limit: U256::from(1_000_000), // The gas limit for the transaction
+    //     gas_price: U256::from(1), // The gas price for the transaction
+    //     access_list: Vec::new(), // EIP-2930 access list
+    // };
 
     // Deploy the contracts
-    println!("\n*** Start Deploying ***");
-    println!("deployer: {:?}", deployer.address);
-
 
     // Define the EVM configuration
-    let config = Config::london();
+    let mut config = Config::istanbul();
+    config.has_push0 = true;
 
     // Define your precompile set
-    // let precompiles = MyPrecompileSet::new(); // Replace with your implementation
 
     let precompiles = MyPrecompileSet;
 
     // Define your EVM table set
-    // let etable_set = MyEtableSet::new(); // Replace with your implementation
-    // let etable_set = Etable::runtime();
-    // let etable_set: Etable<_, MyBackend, _> = Etable::runtime();
-    // let etable_set = Etable::runtime::<MyBackend>();
-    // Assuming MyBackend implements RuntimeEnvironment and MyFunctionType is your function type
-    // let etable_set: Etable<MyBackend, MyFunctionType> = Etable::runtime();
-    // let etable_set = Etable::runtime::<MyBackend, Efn>();
-    // let etable_set = Etable::runtime();
-
-
-    // use evm::standard::{Etable, Efn};
-
-    // Create a standard Etable with default opcode handling
-    // let etable: Etable<State<'_>, MyBackend, CallCreateTrap> = Etable::runtime();
-    
-
-    // let etable_set: Etable<MyBackend, CallCreateTrap> = Etable::runtime();
-    // let etable_set = Etable::runtime();
-    // let etable_set: Etable<_, MyBackend> = Etable::runtime();
-    // // // Initialize the EtableResolver
-    // let resolver = evm::standard::EtableResolver::new(&config, &precompiles, &etable_set);
-
-    // // Now you can use this resolver with the standard Invoker
-    // let invoker = evm::standard::Invoker::new(&config, &resolver);
-
-
-    // Assuming MyBackend implements RuntimeBackend
-    // let my_backend = MyBackend::new();
-
-    // Create a runtime Etable
-    // let etable_set = Etable::runtime::<MyBackend>();
     let etable_set = evm::standard::Etable::<MyBackend>::runtime();
-    // let etable_set = evm::Etable::<MyBackend>::runtime();
-    // let etable_set = Etable::<MyBackend, CallCreateTrap>::runtime();
-
+    
     // Create a standard EtableResolver
     let etable_resolver = EtableResolver::new(&config, &precompiles, &etable_set);
 
     // Create a standard Invoker
-    let invoker = Invoker::new(&config, &etable_resolver);
+    let invoker: Invoker<'_, '_, EtableResolver<'_, '_, '_, MyPrecompileSet, evm::Etable<evm::standard::State<'_>, MyBackend, evm::trap::CallCreateTrap>>> = evm::standard::Invoker::new(&config, &etable_resolver);
+
+    // let create_args = TransactArgs::Create {
+    //     caller: deployer.address,
+    //     value: U256::zero(),
+    //     init_code: vec![0x60, 0x60, 0x60, 0x40],
+    //     salt: None,
+    //     gas_limit: U256::from(1_000_000_000_000_000_000u64),
+    //     gas_price: U256::from(1),
+    //     access_list: Vec::new(),
+    // };
+
+    // let mut backend = MyBackend::new();
+    // Execute the transaction
+    // let result = evm::transact(
+    //     create_args,
+    //     None, // or Some(heap_depth) if needed
+    //     &mut backend,
+    //     &invoker,
+    // );
 
 
-    // if let Err(e) = deploy_contracts(
-    //     &mut contracts_data,
-    //     &mut executor,
-    //     &mut deployer,
-    // ) {
-    //     eprintln!("Error deploying contracts: {}", e);
-    //     exit(1);
-    // }
+    // let invoker = Invoker::new(&config, &etable_resolver);
+
+    println!("\n*** Start Deploying ***");
+
+    if let Err(e) = deploy_contracts(
+        &mut contracts_data,
+        &mut backend,
+        &mut deployer,
+        &invoker
+    ) {
+        eprintln!("Error deploying contracts: {}", e);
+        exit(1);
+    }
 
     // Interaction loop
     // loop {
