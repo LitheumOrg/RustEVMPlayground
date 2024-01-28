@@ -242,7 +242,6 @@ dependencies = [
 [[package]]
 name = "evm"
 version = "1.0.0-dev"
-source = "git+https://github.com/rust-ethereum/evm.git?branch=master#0d2ce88b83bb616dafe6587c65f799a9ed956ce1"
 dependencies = [
  "evm-interpreter",
  "primitive-types",
@@ -252,7 +251,6 @@ dependencies = [
 [[package]]
 name = "evm-interpreter"
 version = "1.0.0-dev"
-source = "git+https://github.com/rust-ethereum/evm.git?branch=master#0d2ce88b83bb616dafe6587c65f799a9ed956ce1"
 dependencies = [
  "auto_impl",
  "parity-scale-codec",
