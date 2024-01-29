@@ -7,12 +7,7 @@ use ethereum_types::{H160, U256, H256};
 use evm::backend::OverlayedBackend;
 use evm::backend::RuntimeBaseBackend;
 
-
 use evm::standard::EtableResolver;
-use evm::standard::Resolver;
-use evm::ExitError;
-use evm::ExitException;
-use evm::ExitFatal;
 use evm::standard::Config;
 use evm::standard::Invoker;
 use evm::standard::TransactArgs;
@@ -20,14 +15,7 @@ use evm::ExitResult;
 use evm::standard::PrecompileSet;
 
 use evm::ExitSucceed;
-use evm::Log;
-use evm::MergeStrategy;
-use evm::RuntimeBackend;
 use evm::RuntimeEnvironment;
-use evm::TransactionalBackend;
-use rlp::RlpStream;
-use sha3::{Digest, Keccak256};
-use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::collections::{HashMap, BTreeMap};
 use std::fs;
@@ -566,7 +554,7 @@ where
         };
 
         // Execute the transaction
-        let result: Result<(ExitSucceed, Option<H160>), ExitError> = evm::transact(
+        let result = evm::transact(
             create_args,
             None, // or Some(heap_depth) if needed
             backend,
@@ -574,12 +562,15 @@ where
         );
         // Handle the result
         match result {
-            Ok((ExitSucceed::Returned, Some(address))) => {
+
+            // match from Invoker TransactValue:
+            // Ok((ExitSucceed::Returned, Some(address))) => {
+            //     -                contract_data.address = Some(address);
+            //     -                println!("Contract {} deployed at address: {:?}", contract_name, address);
+            //     -            },
+            Ok(evm::standard::invoker::TransactValue::Create { succeed: ExitSucceed::Returned, address }) => {
                 contract_data.address = Some(address);
                 println!("Contract {} deployed at address: {:?}", contract_name, address);
-            },
-            Ok((_, None)) => {
-                return Err(io::Error::new(io::ErrorKind::Other, "Deployment did not return an address"));
             },
             Err(e) => {
                 return Err(io::Error::new(io::ErrorKind::Other, format!("Deployment failed: {:?}", e)));
@@ -603,7 +594,7 @@ fn call_contract_function<'a, 'b, 'c>(
     backend: &mut OverlayedBackend<MyBackend>,
     caller: &mut Account,
     invoker: &Invoker<'a, 'b, EtableResolver<'a, 'b, 'c, MyPrecompileSet, evm::Etable<evm::standard::State<'c>, OverlayedBackend<MyBackend>, evm::trap::CallCreateTrap>>>,
-) -> Result<Option<H160>, std::io::Error>
+) -> Result<Vec<u8>, std::io::Error>
 where
     'a: 'c, 
 {
@@ -644,7 +635,7 @@ where
 
     // Handle the result
     match result {
-        Ok((ExitSucceed::Returned, output)) => Ok(output),
+        Ok(evm::standard::invoker::TransactValue::Call { succeed: ExitSucceed::Returned, retval }) => Ok(retval),
         Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Unexpected result")),
         Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("Call failed: {:?}", e))),
     }
