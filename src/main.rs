@@ -2,27 +2,35 @@ use dialoguer::Input;
 
 use ethabi::Contract;
 use ethabi::param_type::ParamType;
+use ethabi::Token;
 use ethereum_types::{H160, U256, H256};
 
-use evm::backend::OverlayedBackend;
 use evm::backend::RuntimeBaseBackend;
 
 use evm::standard::EtableResolver;
 use evm::standard::Config;
 use evm::standard::Invoker;
 use evm::standard::TransactArgs;
+use evm::ExitError;
+use evm::ExitException;
+use evm::ExitFatal;
 use evm::ExitResult;
 use evm::standard::PrecompileSet;
 
 use evm::ExitSucceed;
+use evm::Log;
+use evm::MergeStrategy;
+use evm::RuntimeBackend;
 use evm::RuntimeEnvironment;
-use std::collections::BTreeSet;
+use evm::TransactionalBackend;
+use std::borrow::Cow;
 use std::collections::{HashMap, BTreeMap};
 use std::fs;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command, exit};
+use std::str::FromStr;
 
 struct ContractData {
     address: Option<H160>,
@@ -49,6 +57,10 @@ impl Account {
             storage: BTreeMap::new(),
             cold: true,
         }
+    }
+    fn is_empty(&self) -> bool {
+        // TODO is this correct?
+        self.code.len() == 0 && self.storage.len() == 0
     }
 }
 
@@ -122,6 +134,9 @@ impl RuntimeBaseBackend for MyBackend {
     }
 }
 
+
+
+
 struct MyPrecompileSet;
 
 impl<S, H> PrecompileSet<S, H> for MyPrecompileSet {
@@ -144,7 +159,7 @@ impl<S, H> PrecompileSet<S, H> for MyPrecompileSet {
 
 // Implement the RuntimeEnvironment trait for MyBackend using the mock block
 impl RuntimeEnvironment for MyBackend {
-    fn block_hash(&self, number: U256) -> H256 {
+    fn block_hash(&self, _number: U256) -> H256 {
         println!("RuntimeEnvironment block_hash {}", self.mock_block.block_hash);
         self.mock_block.block_hash
     }
@@ -189,6 +204,200 @@ impl RuntimeEnvironment for MyBackend {
         self.mock_block.chain_id
     }
 }
+
+
+impl RuntimeBackend for MyBackend {
+    // Not sure what is this....
+    fn original_storage(&self, address: H160, index: H256) -> H256 {
+        println!("RuntimeBackend original_storage {} {}", address, index);
+        match self.original_storage_map.get(&(address, index)) {
+            Some(&value) => value,
+            None => H256::default(), // Return a default value if not found
+        }
+    }
+    // TODO This may not be correct, we need to flag things as deleted perhaps
+    fn deleted(&self, address: H160) -> bool {
+        println!("RuntimeBackend deleted {}", address);
+        // Implement the deleted method to check if the account is deleted.
+        if let Some(account) = self.accounts.get(&address) {
+            return account.is_empty();
+        }
+        false
+    }
+
+    fn is_cold(&self, address: H160, index: Option<H256>) -> bool {
+        println!("RuntimeBackend is_cold {} {:?}", address, index);
+        // Implement the is_cold method to check if the account is cold.
+        // You can use the `cold` flag in the Account struct to determine this.
+        if let Some(account) = self.accounts.get(&address) {
+            return account.cold;
+        }
+        true
+    }
+
+    fn mark_hot(&mut self, address: H160, index: Option<H256>) {
+        println!("RuntimeBackend mark_hot {} {:?}", address, index);
+        if let Some(account) = self.accounts.get_mut(&address) {
+            account.cold = false;
+        } else {
+            // TODO throw an error? seems that Rust EVM does not care about this case,
+            // this function does not return a Result
+            // TODO log this case
+        }
+    }
+
+    fn set_storage(
+        &mut self,
+        address: H160,
+        index: H256,
+        value: H256
+    ) -> Result<(), ExitError> {
+        println!("RuntimeBackend set storage {:?} {:?} {:?}", address, index, value);
+        // Implement the set_storage method to set the storage value for the given address and key.
+        // You may need to handle errors and update the original storage map.
+        if let Some(account) = self.accounts.get_mut(&address) {
+            account.storage.insert(index, value);
+            self.original_storage_map.insert((address, index), value);
+            Ok(())
+        } else {
+            Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("Could not set storage"))))
+        }
+    }
+
+    fn log(&mut self, log: Log) -> Result<(), ExitError> {
+        println!("RuntimeBackend log: {:?}", log);
+        // Implement the log method to handle logs.
+        // You may need to handle errors and perform necessary actions.
+        // For example, you can store the log in your backend.
+        // You can also return an error if necessary.
+        unimplemented!()
+    }
+
+    // TODO this is not correct, we need to flag things as deleted perhaps
+    fn mark_delete(&mut self, address: H160) {
+        println!("RuntimeBackend mark_delete {}", address);
+        self.accounts.remove(&address);
+    }
+
+    fn reset_storage(&mut self, address: H160) {
+        println!("RuntimeBackend reset_storage {}", address);
+        if let Some(account) = self.accounts.get_mut(&address) {
+            account.storage.clear();
+        }
+    }
+
+    fn set_code(
+        &mut self,
+        address: H160,
+        code: Vec<u8>
+    ) -> Result<(), ExitError> {
+        println!("RuntimeBackend set_code {:?}", address);
+        if let Some(account) = self.accounts.get_mut(&address) {
+            account.code = code;
+            Ok(())
+        } else {
+            Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("Could not set code"))))
+        }
+    }
+
+    fn reset_balance(&mut self, address: H160) {
+        println!("RuntimeBackend reset_balance {}", address);
+        if let Some(account) = self.accounts.get_mut(&address) {
+            account.balance = U256::zero();
+        } else {
+            // TODO log this case
+        }
+    }
+
+    fn deposit(&mut self, target: H160, value: U256) {
+        println!("RuntimeBackend deposit {} {}", target, value);
+        
+        // Check if the account already exists
+        if let Some(account) = self.accounts.get_mut(&target) {
+            // Account exists, just update its balance
+            account.balance += value;
+        } else {
+            // Account does not exist, create a new one with the given balance
+            let new_account = Account {
+                address: target,
+                balance: value,
+                nonce: U256::zero(),
+                code: Vec::new(),
+                storage: BTreeMap::new(),
+                cold: true,
+            };
+            self.accounts.insert(target, new_account);
+        }
+    }
+
+    fn withdrawal(&mut self, source: H160, value: U256) -> Result<(), ExitError> {
+        println!("RuntimeBackend withdrawal");
+        // Implement the withdrawal method to withdraw funds from an account.
+        // You may need to handle errors and update the account's balance.
+        if let Some(account) = self.accounts.get_mut(&source) {
+            if account.balance >= value {
+                account.balance -= value;
+                Ok(())
+            } else {
+                Err(ExitError::Exception(ExitException::OutOfFund))
+            }
+        } else {
+            Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("OutOfGas - Account not found"))))
+        }
+    }
+
+    fn inc_nonce(&mut self, address: H160) -> Result<(), ExitError> {
+        // Implement the inc_nonce method to increment an account's nonce.
+        // You may need to handle errors and update the account's nonce.
+        println!("RuntimeBackend inc_nonce {:?}", address);
+        if let Some(account) = self.accounts.get_mut(&address) {
+            account.nonce += U256::one();
+            Ok(())
+        } else {
+            Err(ExitError::Fatal(ExitFatal::Other(Cow::Borrowed("account not found, inc_nonce"))))
+        }
+    }
+
+    // Implement the rest of the required methods for the RuntimeBackend trait...
+
+    // ...
+}
+    
+
+impl TransactionalBackend for MyBackend {
+    fn push_substate(&mut self) {
+        println!("push_substate");
+        // Implement logic to create a new substate
+        // This could involve taking a snapshot of the current state
+        // so that it can be restored if needed.
+    }
+
+    fn pop_substate(&mut self, strategy: MergeStrategy) {
+        println!("pop_substate");
+        // Implement logic to either commit or revert the changes in the substate
+        // based on the provided strategy.
+        match strategy {
+            MergeStrategy::Commit => {
+                println!("COMMIT");
+                // Commit changes made in the current substate
+                // This might involve applying the changes to the main state.
+            },
+            MergeStrategy::Revert => {
+                println!("REVERT");
+                // Revert changes made in the current substate
+                // This might involve restoring the state from the snapshot taken when
+                // the substate was created.
+            },
+            MergeStrategy::Discard => {
+                println!("DISCARD");
+                // Discard changes made in the current substate
+                // This might involve doing nothing.
+            },
+        }
+    }
+}
+  
+
 
 type ContractsData = HashMap<String, ContractData>;
 
@@ -286,99 +495,113 @@ fn choose_function(abi: &ethabi::Contract) -> Result<(String, bool, Vec<ParamTyp
     }
 }
 
+fn validate_input(input: &str, param_type: &ParamType, deployer_address: H160) -> Result<String, String> {
+    match param_type {
+        ParamType::Address => {
+            let input = if input.starts_with("0x") { &input[2..] } else { input };
+            if input.is_empty() {
+                Ok(format!("{:?}", deployer_address))
+            } else if input.len() == 40 && input.chars().all(|c| c.is_digit(16)) {
+                match H160::from_str(input) {
+                    Ok(_) => Ok(format!("0x{}", input)),
+                    Err(_) => Err("Invalid address format.".to_string()),
+                }
+            } else {
+                Err("Invalid address. Please enter a 40-character hexadecimal string.".to_string())
+            }
+        },
+        ParamType::Bool => {
+            match input.trim() {
+                "" | "0" | "false" => Ok("false".to_string()),
+                "1" | "true" => Ok("true".to_string()),
+                _ => Err("Invalid boolean input. Please enter 'true', 'false', '1', or '0'.".to_string()),
+            }
+        },
+        ParamType::Uint(size) => {
+            if input.is_empty() {
+                Ok("0".to_string())
+            } else {
+                match U256::from_dec_str(input) {
+                    Ok(_) => Ok(input.to_string()),
+                    Err(_) => Err(format!("Invalid uint{} value. Please enter a valid number.", size)),
+                }
+            }
+        },
+        ParamType::String => {
+            Ok(input.to_string()) // No additional validation needed for strings
+        },
+        ParamType::FixedBytes(size) => {
+            if input.is_empty() {
+                Ok("0".repeat(*size * 2))
+            } else if input.len() <= *size * 2 && input.chars().all(|c| c.is_digit(16)) {
+                Ok(format!("{:0<width$}", input, width = size * 2)) // Pad with zeros if necessary
+            } else {
+                Err(format!("Input must be up to {} hex characters", size * 2))
+            }
+        },
+        _ => Err("Unsupported parameter type for validation.".to_string()),
+    }
+}
 
 fn ask_for_function_inputs(params: &[ParamType], deployer_address: H160) -> Result<Vec<String>, io::Error> {
-
     let mut args = Vec::new();
     for (i, param) in params.iter().enumerate() {
-        let input = match param {
-            ParamType::Address => {
-                let default_address = format!("{:?}", deployer_address);
-                let input: String = Input::new()
-                    .with_prompt(&format!("Parameter {} [address] (press enter for default: {})", i, default_address))
-                    .allow_empty(true)
-                    .interact_text()
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                let input = if input.trim().is_empty() {
-                    default_address // Use the default deployer address
-                } else {
-                    input
-                };
-                input
-            },
-            ParamType::Uint(size) => {
-                let input: String = Input::new()
-                    .with_prompt(&format!("Parameter {} [uint{}] value (press enter for 0)", i, size))
-                    .allow_empty(true)
-                    .interact_text()
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                let input = if input.trim().is_empty() {
-                    "0".to_string() // Default value: 0
-                } else {
-                    input
-                };
-                input
-            },
-            ParamType::String => {
-                let input: String = Input::new()
-                    .with_prompt(&format!("Parameter {} [string] (press enter for empty)", i))
-                    .allow_empty(true)
-                    .interact_text()
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                let input = if input.trim().is_empty() {
-                    "".to_string() // Default value: empty string
-                } else {
-                    input
-                };
-                input
-            },
-            ParamType::Bool => {
-                let input: String = Input::new()
-                    .with_prompt(&format!("Parameter {} [boolean] (true or false, press enter for false)",i))
-                    .allow_empty(true)
-                    .interact_text()
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-                let input = if input.trim().is_empty() {
-                    "false".to_string() // Default value: false
-                } else {
-                    input
-                };
-                input
-            },
-            ParamType::FixedBytes(size) => {
-                let input: String = Input::new()
-                    .with_prompt(&format!("Parameter {} [bytes32] (up to 64 hex characters, press enter for zeroed bytes)", i))
-                    .allow_empty(true)
-                    .interact_text()
-                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-            
-                let input = if input.trim().is_empty() {
-                    "0".repeat(64) // Default value: zeroed bytes32
-                } else {
-                    let trimmed_input = input.trim();
-                    if trimmed_input.len() > size * 2 {
-                        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("Input must be up to {} hex characters", size * 2)));
+        loop {
+            let input_result = match param {
+                ParamType::Address => {
+                    let default_address = format!("{:?}", deployer_address);
+                    Input::<String>::new()
+                        .with_prompt(&format!("Parameter {} [address] (press enter for default: {})", i, default_address))
+                        .allow_empty(true)
+                        .interact_text()
+                },
+                ParamType::Uint(size) => {
+                    Input::new()
+                        .with_prompt(&format!("Parameter {} [uint{}] value (press enter for 0)", i, size))
+                        .allow_empty(true)
+                        .interact_text()
+                },
+                ParamType::String => {
+                    Input::new()
+                        .with_prompt(&format!("Parameter {} [string] (press enter for empty)", i))
+                        .allow_empty(true)
+                        .interact_text()
+                    
+                },
+                ParamType::Bool => {
+                   Input::new()
+                        .with_prompt(&format!("Parameter {} [boolean] (true or false, 1 or 0, or press enter for false)",i))
+                        .allow_empty(true)
+                        .interact_text()                  
+                },
+                ParamType::FixedBytes(size) => {
+                    Input::new()
+                        .with_prompt(&format!("Parameter {} [bytes{}] (enter hex string up to {} characters, press enter for zeroed bytes)", i, size, size * 2))
+                        .allow_empty(true)
+                        .interact_text()
+                },
+                _ => unimplemented!("Type not supported yet: {:?}", param),
+            };
+            match input_result {
+                Ok(input) => {
+                    let validated_input = validate_input(input.trim(), param, deployer_address);
+                    match validated_input {
+                        Ok(valid_input) => {
+                            args.push(valid_input);
+                            break;
+                        },
+                        Err(err_msg) => {
+                            println!("{}", err_msg);
+                            continue;
+                        }
                     }
-            
-                    // If the length of trimmed_input is odd, prepend a zero to make it even length.
-                    let even_length_input = if trimmed_input.len() % 2 == 1 {
-                        format!("0{}", trimmed_input)
-                    } else {
-                        trimmed_input.to_string()
-                    };
-            
-                    // Pad the input with zeros to make it fit into 32 bytes.
-                    format!("{:0<width$}", even_length_input, width = size * 2)
-                };
-            
-                input
-            },            
-            _ => {
-                println!("Unhandled parameter type: {:?}", param);
-                unimplemented!("Type not supported yet: {:?}", param);
-            },
-        };
-        args.push(input);
+                },
+                Err(e) => {
+                    println!("Error reading input: {}", e);
+                    continue;
+                }
+            }
+        }
     }
 
     Ok(args)
@@ -509,9 +732,9 @@ fn compile_contracts(contracts_dir: &str, contract_names: &[String]) -> Result<(
 
 fn deploy_contracts<'a, 'b, 'c>(
     contracts_data: &mut ContractsData,
-    backend: &mut OverlayedBackend<MyBackend>,
+    backend: &mut MyBackend,
     deployer: &mut Account,
-    invoker: &Invoker<'a, 'b, EtableResolver<'a, 'b, 'c, MyPrecompileSet, evm::Etable<evm::standard::State<'c>, OverlayedBackend<MyBackend>, evm::trap::CallCreateTrap>>>,
+    invoker: &Invoker<'a, 'b, EtableResolver<'a, 'b, 'c, MyPrecompileSet, evm::Etable<evm::standard::State<'c>, MyBackend, evm::trap::CallCreateTrap>>>,
 ) -> Result<(), io::Error> 
 where
     'a: 'c, 
@@ -562,12 +785,6 @@ where
         );
         // Handle the result
         match result {
-
-            // match from Invoker TransactValue:
-            // Ok((ExitSucceed::Returned, Some(address))) => {
-            //     -                contract_data.address = Some(address);
-            //     -                println!("Contract {} deployed at address: {:?}", contract_name, address);
-            //     -            },
             Ok(evm::standard::invoker::TransactValue::Create { succeed: ExitSucceed::Returned, address }) => {
                 contract_data.address = Some(address);
                 println!("Contract {} deployed at address: {:?}", contract_name, address);
@@ -591,10 +808,10 @@ fn call_contract_function<'a, 'b, 'c>(
     contract_data: &ContractData,
     function_name: &str,
     encoded_inputs: Vec<u8>,
-    backend: &mut OverlayedBackend<MyBackend>,
+    backend: &mut MyBackend,
     caller: &mut Account,
-    invoker: &Invoker<'a, 'b, EtableResolver<'a, 'b, 'c, MyPrecompileSet, evm::Etable<evm::standard::State<'c>, OverlayedBackend<MyBackend>, evm::trap::CallCreateTrap>>>,
-) -> Result<Vec<u8>, std::io::Error>
+    invoker: &Invoker<'a, 'b, EtableResolver<'a, 'b, 'c, MyPrecompileSet, evm::Etable<evm::standard::State<'c>, MyBackend, evm::trap::CallCreateTrap>>>,
+) -> Result<Vec<Token>, std::io::Error>
 where
     'a: 'c, 
 {
@@ -615,6 +832,8 @@ where
     let data = [function_selector.to_vec(), encoded_inputs].concat();
 
     println!("stack data: {:?}", data);
+
+    // Execute the transaction
     let call_args = TransactArgs::Call {
         caller: caller.address,
         address: contract_data.address.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Contract address not set"))?,
@@ -624,21 +843,33 @@ where
         gas_price: U256::from(1),
         access_list: Vec::new(),
     };
-
-    // Execute the transaction
     let result = evm::transact(
         call_args,
         None,
         backend,
         invoker,
     );
-
+    
     // Handle the result
     match result {
-        Ok(evm::standard::invoker::TransactValue::Call { succeed: ExitSucceed::Returned, retval }) => Ok(retval),
+        Ok(evm::standard::invoker::TransactValue::Call { succeed: ExitSucceed::Returned, retval }) => {
+            let decoded_output = if !retval.is_empty() {
+                function.decode_output(&retval).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+            } else {
+                Vec::new()
+            };
+            
+            Ok(decoded_output)
+        },
+        Ok(evm::standard::invoker::TransactValue::Call { succeed: ExitSucceed::Stopped, .. }) => {
+            // Handling a successful call with no return value
+            println!("Call successful with no return value.");
+            Ok(Vec::new())
+        },
         Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Unexpected result")),
         Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("Call failed: {:?}", e))),
     }
+
 }
 
 // https://github.com/rust-blockchain/evm-tests
@@ -703,23 +934,23 @@ fn main() -> Result<(), io::Error> {
     // Define your precompile set
     let precompiles = MyPrecompileSet;
 
-    let mut overlayed_backend = OverlayedBackend::new(my_backend, BTreeSet::new());
+    // let mut overlayed_backend = OverlayedBackend::new(my_backend, BTreeSet::new());
 
     // Define your EVM table set
-    let etable_set = evm::standard::Etable::<OverlayedBackend<MyBackend>>::runtime();
+    //let etable_set = evm::standard::Etable::<OverlayedBackend<MyBackend>>::runtime();
+    let etable_set = evm::standard::Etable::<MyBackend>::runtime();
     
     // Create a standard EtableResolver
     let etable_resolver = EtableResolver::new(&config, &precompiles, &etable_set);
-    // let resolver = Resolver::new(&config, &precompiles, &etable_set);
+    
     // Create a standard Invoker
-    // let invoker: Invoker<'_, '_, EtableResolver<'_, '_, '_, MyPrecompileSet, evm::Etable<evm::standard::State<'_>, OverlayedBackend<MyBackend>, evm::trap::CallCreateTrap>>> = evm::standard::Invoker::new(&config, &etable_resolver);
-    let invoker: Invoker<'_, '_, EtableResolver<'_, '_, '_, MyPrecompileSet, evm::Etable<evm::standard::State<'_>, OverlayedBackend<MyBackend>, evm::trap::CallCreateTrap>>> = evm::standard::Invoker::new(&config, &etable_resolver);
+    let invoker: Invoker<'_, '_, EtableResolver<'_, '_, '_, MyPrecompileSet, evm::Etable<evm::standard::State<'_>, MyBackend, evm::trap::CallCreateTrap>>> = evm::standard::Invoker::new(&config, &etable_resolver);
 
     // Deploy the contracts
     println!("\n*** Start Deploying ***");
     if let Err(e) = deploy_contracts(
         &mut contracts_data,
-        &mut overlayed_backend,
+        &mut my_backend,
         &mut deployer,
         &invoker
     ) {
@@ -753,7 +984,7 @@ fn main() -> Result<(), io::Error> {
             contract_data,
             &chosen_function_name,
             encoded_args,
-            &mut overlayed_backend,
+            &mut my_backend,
             &mut deployer,
             &invoker,
         ) {
@@ -770,5 +1001,7 @@ fn main() -> Result<(), io::Error> {
     #[allow(unreachable_code)] 
     Ok(())
 }
+
+
 
 

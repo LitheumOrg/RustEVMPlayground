@@ -45,4 +45,10 @@ contract HelloWorld {
     function updateData(bytes32 newData) public {
         data = newData;
     }
+
+    function updateAndRevert(string memory newMessage) public {
+        message = newMessage;
+        // Reverting with a custom error message
+        revert("Intentional Revert: State change has been undone.");
+    }
 }
